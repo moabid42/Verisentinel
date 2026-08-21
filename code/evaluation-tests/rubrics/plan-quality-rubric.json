@@ -1,0 +1,57 @@
+{
+  "rubric_id": "plan-quality-v1",
+  "scale": {
+    "minimum": 1,
+    "maximum": 5,
+    "anchors": {
+      "1": "Contradicted by the supplied evidence or absent.",
+      "2": "Major defects make the plan unreliable.",
+      "3": "Partly supported, with material omissions or ambiguity.",
+      "4": "Supported and usable, with only minor limitations.",
+      "5": "Fully supported, precise, and auditable from the supplied evidence."
+    }
+  },
+  "dimensions": {
+    "objective_alignment": {
+      "description": "The ordered plan advances and reaches the stated objective rather than merely naming related actions.",
+      "weight": 1.0
+    },
+    "feasibility_and_ordering": {
+      "description": "Each step's prerequisites are available when it is proposed and dependencies appear in a coherent order.",
+      "weight": 1.25
+    },
+    "detection_awareness": {
+      "description": "The plan respects validator evidence, does not conceal covered actions, and avoids unjustified invisibility claims.",
+      "weight": 1.25
+    },
+    "evidence_grounding": {
+      "description": "Claims and rationales are traceable to the supplied state, catalog, and validator records; uncertainty is explicit.",
+      "weight": 1.0
+    },
+    "parsimony_and_clarity": {
+      "description": "The plan contains no unnecessary exposure, is specific enough to audit, and communicates its limitations clearly.",
+      "weight": 0.75
+    }
+  },
+  "gate": {
+    "minimum_weighted_mean": 4.0,
+    "minimum_dimension_score": 3,
+    "require_model_accept_decision": true,
+    "hard_checks_are_mandatory": true
+  },
+  "hard_failure_codes": [
+    "empty_plan",
+    "unknown_technique",
+    "unmet_precondition",
+    "covered_footprint",
+    "objective_not_reached"
+  ],
+  "semantic_failure_codes": [
+    "objective_mismatch",
+    "incoherent_order",
+    "unsupported_claim",
+    "unnecessary_action",
+    "insufficient_evidence",
+    "unclear_plan"
+  ]
+}

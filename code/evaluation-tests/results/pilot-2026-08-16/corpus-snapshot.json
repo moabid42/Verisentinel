@@ -1,0 +1,23 @@
+{
+  "detection_permission_edges": 50,
+  "detection_sources": {
+    "sigma": 26
+  },
+  "enabled_detection_rows": 26,
+  "executable_techniques": 278,
+  "iam_dataset_version": "sha256:e1132fc7da70b2f946829767a932b7eda3b63f18dd6cc3104809d170e0e0de8b",
+  "iamouflage_version": "sha256:53771adf4855dbc4f19e41f8cd5da4d8d9666f795ab23068093ff9c6dcc8a717",
+  "ingestion_issue_counts": {
+    "empty_detection_row": 11,
+    "unsupported_empty_technique_requirements": 1
+  },
+  "ingestion_issue_total": 12,
+  "matrix_version": "sha256:76ac9817cdefd270a51cd3a56adae498bfa1672d43d2feac15f18797de613196",
+  "permission_columns": 10132,
+  "represented_coverage_permissions": 50,
+  "scenario": "iamouflage-sigma-cloudbuild-actas",
+  "source_detection_records": 192,
+  "source_technique_records": 279,
+  "technique_footprint_edges": 424,
+  "technique_requirement_edges": 424
+}

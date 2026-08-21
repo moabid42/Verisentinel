@@ -1,0 +1,683 @@
+{
+  "corpus_snapshot": {
+    "detection_permission_edges": 50,
+    "detection_sources": {
+      "sigma": 26
+    },
+    "enabled_detection_rows": 26,
+    "executable_techniques": 278,
+    "iam_dataset_version": "sha256:e1132fc7da70b2f946829767a932b7eda3b63f18dd6cc3104809d170e0e0de8b",
+    "iamouflage_version": "sha256:53771adf4855dbc4f19e41f8cd5da4d8d9666f795ab23068093ff9c6dcc8a717",
+    "ingestion_issue_counts": {
+      "empty_detection_row": 11,
+      "unsupported_empty_technique_requirements": 1
+    },
+    "ingestion_issue_total": 12,
+    "matrix_version": "sha256:76ac9817cdefd270a51cd3a56adae498bfa1672d43d2feac15f18797de613196",
+    "permission_columns": 10132,
+    "represented_coverage_permissions": 50,
+    "scenario": "iamouflage-sigma-cloudbuild-actas",
+    "source_detection_records": 192,
+    "source_technique_records": 279,
+    "technique_footprint_edges": 424,
+    "technique_requirement_edges": 424
+  },
+  "environment": {
+    "machine": "arm64",
+    "platform": "macOS-15.7.7-arm64-arm-64bit-Mach-O",
+    "python": "3.13.5",
+    "z3": "4.16.0"
+  },
+  "generated_at": "2026-08-16T13:54:06.990314+00:00",
+  "inputs": {
+    "cases": {
+      "path": "evaluation-tests/cases/plan-quality-cases.json",
+      "sha256": "06a525eedfd42aa532fd50422ed4c6589444e1f8b0822744444414427f272ef5"
+    },
+    "corpus_scenario": {
+      "path": "evaluation-pipeline/scenarios/iamouflage-sigma-cloudbuild-actas.yaml",
+      "sha256": "0f5f6663e2e9ed6bac7ec470437dda17fc10c4ec0b6854d2d3faf78c3cd5bd91"
+    },
+    "judge_prompt": {
+      "path": "evaluation-tests/prompts/quality-judge.md",
+      "sha256": "d9ddc9112417258519ba1bd74a27a03e89c7aa304e7ecf3e5b5cb30bc80f4af5"
+    },
+    "manual_plan_review": {
+      "path": "evaluation-tests/cases/manual-plan-reviews.json",
+      "sha256": "8839a8226a9d9bf4f782c7ffe536ab3da9bbc02fc183f530e973f752e9fd3735"
+    },
+    "random_seed": 20260816,
+    "rubric": {
+      "path": "evaluation-tests/rubrics/plan-quality-rubric.json",
+      "sha256": "532b474ca65c073d1d5c9b42d57d7d5d20857bfae23b8c3e5b47857e5ee28525"
+    }
+  },
+  "manual_plan_review": {
+    "accepted_scenarios": 4,
+    "admissible_selected_steps": 19,
+    "cases": [
+      {
+        "accepted_by_reviewer": true,
+        "automatic_record_checks_passed": true,
+        "issues": [],
+        "manual_judgments": {
+          "instructions_sufficient": true,
+          "model_boundary_acknowledged": true,
+          "objective_path_sufficient": true,
+          "ordering_coherent": true
+        },
+        "manual_rationale": "The six selected actions form a complete dependency chain: enumerate and inspect the Cloud Run target, poison its image, deploy the revision as the runtime identity, obtain the stored credential, and use the resulting BigQuery permissions for export. Each selected action was validator-admissible at its recorded step, and the descriptions and rationales were sufficient for the reviewer to understand how the declared objective would be reached under the scenario contract.",
+        "match_policy": "within_candidates",
+        "model": "gemini-3.6-flash",
+        "objective": "From an Artifact Registry writer, exfiltrate a BigQuery dataset by poisoning a Cloud Run supply chain, undetected.",
+        "report": "evaluation-pipeline/runs/20260805T172402Z_batch_abbd6759c80d4c699218cbc557510d8f/artifactregistry-supply-chain-exfil/report.json",
+        "report_sha256": "cf8104397aa0cd4b63a65926ccc57f8953866930b9bcfbf23c6cf76d6cab94b6",
+        "role": "core-inline",
+        "scenario": "artifactregistry-supply-chain-exfil",
+        "scenario_path": "evaluation-pipeline/scenarios/artifactregistry-supply-chain-exfil.yaml",
+        "scenario_sha256": "ca9a029e66276cec911e87a773c2e356df133ac5fc3783fa6dc4820678678bef",
+        "step_count": 6,
+        "steps": [
+          {
+            "admissible": true,
+            "description": "Enumerate Cloud Run services to find a target with a privileged runtime SA.",
+            "published_rank": 1,
+            "rationale": "Enumerate available Cloud Run services in the project to identify candidate targets utilizing runtime service accounts with elevated permissions.",
+            "selected_technique": "discovery:enum-cloud-run-services:1",
+            "step_index": 0
+          },
+          {
+            "admissible": true,
+            "description": "Inspect the checkout-api revision to read its runtime SA and consumed image tag.",
+            "published_rank": 1,
+            "rationale": "Inspecting the service configuration reveals the exact service account and container image tag utilized by checkout-api, necessary for positioning the supply chain poisoning attack.",
+            "selected_technique": "discovery:inspect-run-service-config:1",
+            "step_index": 1
+          },
+          {
+            "admissible": true,
+            "description": "Push a poisoned image to the tag checkout-api pulls on deploy.",
+            "published_rank": 1,
+            "rationale": "Directly uses existing Artifact Registry upload permissions to introduce a poisoned container image into the registry.",
+            "selected_technique": "resource-development:push-poisoned-image:1",
+            "step_index": 2
+          },
+          {
+            "admissible": true,
+            "description": "Deploy a new checkout-api revision (actAs the runtime SA) running the poisoned image.",
+            "published_rank": 1,
+            "rationale": "We hold both iam.serviceAccounts.actAs and run.services.update permissions, along with the malicious-image capability. Deploying a new revision triggers execution with the target runtime service account.",
+            "selected_technique": "execution:deploy-run-revision-as-sa:1",
+            "step_index": 3
+          },
+          {
+            "admissible": true,
+            "description": "Read the secret object from GCS to recover a BigQuery-capable DB credential.",
+            "published_rank": 1,
+            "rationale": "Leverages the deployed Cloud Run revision and existing GCS read permissions to collect sensitive secret objects without triggering administrative alerts.",
+            "selected_technique": "collection:read-gcs-secret-object:1",
+            "step_index": 4
+          },
+          {
+            "admissible": true,
+            "description": "Export the target BigQuery dataset with the harvested credential.",
+            "published_rank": 1,
+            "rationale": "Directly fulfills the primary objective of exfiltrating the BigQuery dataset using the permissions and credentials obtained from the previous steps.",
+            "selected_technique": "exfiltration:bigquery-export-dataset:1",
+            "step_index": 5
+          }
+        ],
+        "top_ranked_steps": 6,
+        "within_three_steps": 6
+      },
+      {
+        "accepted_by_reviewer": true,
+        "automatic_record_checks_passed": true,
+        "issues": [],
+        "manual_judgments": {
+          "instructions_sufficient": true,
+          "model_boundary_acknowledged": true,
+          "objective_path_sufficient": true,
+          "ordering_coherent": true
+        },
+        "manual_rationale": "The four selected actions enumerate the target identity, deploy a function as that identity, access the declared secret, and extract the BigQuery table. The scripted gains make the dependencies explicit, every selected action was admissible when reviewed, and the recorded descriptions were sufficient to explain the objective-reaching route.",
+        "match_policy": "within_candidates",
+        "model": "gemini-3.6-flash",
+        "objective": "From the CI/CD deployer, reach exfiltration of a BigQuery table without tripping a loaded detection.",
+        "report": "evaluation-pipeline/runs/20260805T172402Z_batch_abbd6759c80d4c699218cbc557510d8f/cloudfunctions-actas-secret-exfil/report.json",
+        "report_sha256": "5521307b9cc13d07603e32aeb50a25403578773f8f92e5f4e0524b68b0395805",
+        "role": "core-inline",
+        "scenario": "cloudfunctions-actas-secret-exfil",
+        "scenario_path": "evaluation-pipeline/scenarios/cloudfunctions-actas-secret-exfil.yaml",
+        "scenario_sha256": "9b471c3a167a7af3f631dff088ff36fe581e9ed471b8a23822e127c8a14b6213",
+        "step_count": 4,
+        "steps": [
+          {
+            "admissible": true,
+            "description": "Enumerate service accounts to locate the privileged runtime SA reachable via actAs.",
+            "published_rank": 1,
+            "rationale": "Enumerating service accounts allows identifying suitable high-privilege runtime service accounts to target for function deployment.",
+            "selected_technique": "discovery:enum-service-accounts:1",
+            "step_index": 0
+          },
+          {
+            "admissible": true,
+            "description": "Ship a function whose runtime identity is runtime-sa, inheriting its secret-read access.",
+            "published_rank": 1,
+            "rationale": "We currently hold cloudfunctions.functions.create and iam.serviceAccounts.actAs permissions, allowing us to deploy a Cloud Function attached to runtime-sa and gain impersonation capabilities.",
+            "selected_technique": "privilege-escalation:deploy-function-as-runtime-sa:1",
+            "step_index": 1
+          },
+          {
+            "admissible": true,
+            "description": "Read the secret version holding a BigQuery-capable DB credential.",
+            "published_rank": 1,
+            "rationale": "We hold the secretmanager.versions.access permission and have impersonated the runtime service account, allowing us to read database credentials silently.",
+            "selected_technique": "collection:access-secret-version:1",
+            "step_index": 2
+          },
+          {
+            "admissible": true,
+            "description": "Extract the target BigQuery table with the harvested credential.",
+            "published_rank": 1,
+            "rationale": "Prerequisites are satisfied with current permissions and db-credential capability; executing this completes the objective.",
+            "selected_technique": "exfiltration:bigquery-extract-table:1",
+            "step_index": 3
+          }
+        ],
+        "top_ranked_steps": 4,
+        "within_three_steps": 4
+      },
+      {
+        "accepted_by_reviewer": true,
+        "automatic_record_checks_passed": true,
+        "issues": [],
+        "manual_judgments": {
+          "instructions_sufficient": true,
+          "model_boundary_acknowledged": true,
+          "objective_path_sufficient": true,
+          "ordering_coherent": true
+        },
+        "manual_rationale": "The six selected actions progress from cluster discovery through credential acquisition and pod enumeration to a privileged workload pivot, serial-output access, and the final secret read. The order respects the scenario's declared capability gains and was sufficient for manual understanding, but the case remains exploratory because Kubernetes RBAC is outside the core thesis scope.",
+        "match_policy": "within_candidates",
+        "model": "gemini-3.6-flash",
+        "objective": "From a read-only GKE foothold, pivot to node identity and recover a Secret Manager credential undetected.",
+        "report": "evaluation-pipeline/runs/20260805T172402Z_batch_abbd6759c80d4c699218cbc557510d8f/gke-workload-pivot-metadata/report.json",
+        "report_sha256": "5b9a0c214899bce273d293d9b733767f236eeb98ee4e9e6824071a5cf91508d6",
+        "role": "exploratory-inline",
+        "scenario": "gke-workload-pivot-metadata",
+        "scenario_path": "evaluation-pipeline/scenarios/gke-workload-pivot-metadata.yaml",
+        "scenario_sha256": "3b669b4082805836f36bbad874f21ce1de83cb96cb84d0956fa8b5bef0eba1b0",
+        "step_count": 6,
+        "steps": [
+          {
+            "admissible": true,
+            "description": "Enumerate clusters to locate the target and its node pool.",
+            "published_rank": 1,
+            "rationale": "Enumerate available GKE clusters using the held container.clusters.list permission to identify target cluster instances.",
+            "selected_technique": "discovery:enum-gke-clusters:1",
+            "step_index": 0
+          },
+          {
+            "admissible": true,
+            "description": "Pull kubeconfig to talk to the cluster API server.",
+            "published_rank": 1,
+            "rationale": "Fetching cluster credentials provides kubeconfig access required for performing API operations on the GKE cluster.",
+            "selected_technique": "discovery:fetch-cluster-credentials:1",
+            "step_index": 1
+          },
+          {
+            "admissible": true,
+            "description": "List pods and identify one running as a privileged Kubernetes service account.",
+            "published_rank": 1,
+            "rationale": "Enumerates running pods in the cluster using held container.pods.list permissions to locate a suitable privileged pod.",
+            "selected_technique": "discovery:enum-cluster-pods:1",
+            "step_index": 2
+          },
+          {
+            "admissible": true,
+            "description": "Exec into payments-worker-0 and query the node metadata server for the node SA token.",
+            "published_rank": 1,
+            "rationale": "We hold container.pods.exec permission and have enumerated cluster pods, allowing exec into a privileged pod to impersonate the node service account.",
+            "selected_technique": "lateral-movement:exec-into-privileged-pod:1",
+            "step_index": 3
+          },
+          {
+            "admissible": true,
+            "description": "Read the node's serial-port output, which leaks a Secret Manager reference.",
+            "published_rank": 1,
+            "rationale": "The node SA capability has been achieved via exec into the privileged pod. Reading the serial port output directly leverages held compute permissions to obtain secrets exposed in logs without triggering watched actions.",
+            "selected_technique": "discovery:read-instance-serial-port:1",
+            "step_index": 4
+          },
+          {
+            "admissible": true,
+            "description": "Access the referenced secret version to recover the credential.",
+            "published_rank": 1,
+            "rationale": "Access the Secret Manager version identified in the serial log using held secretmanager.versions.access permission to recover the target credential.",
+            "selected_technique": "collection:access-secret-version:1",
+            "step_index": 5
+          }
+        ],
+        "top_ranked_steps": 6,
+        "within_three_steps": 6
+      },
+      {
+        "accepted_by_reviewer": true,
+        "automatic_record_checks_passed": true,
+        "issues": [],
+        "manual_judgments": {
+          "instructions_sufficient": true,
+          "model_boundary_acknowledged": true,
+          "objective_path_sufficient": true,
+          "ordering_coherent": true
+        },
+        "manual_rationale": "The reviewed route first uses Cloud Asset IAM enumeration to identify the build-runner identity, then uses Cloud Build with actAs, and finally reads serial-port output using the acquired permission. The first action appeared at rank two, so the result demonstrates the intended human choice among three validated recommendations rather than autonomous top-one planning. The IAMouflage source excerpts supplied concrete procedural detail for the selected techniques.",
+        "match_policy": "within_candidates",
+        "model": "gemini-3.6-flash",
+        "objective": "From the CI/CD deployer identity, reach credential exfiltration without tripping a loaded sigma rule.",
+        "report": "evaluation-pipeline/runs/20260814T140335Z_iamouflage-sigma-cloudbuild-actas/report.json",
+        "report_sha256": "0b501fcfee8fe092fd6fdcd2844adfb07b69fb476b451aa3b7859aa510ed6681",
+        "role": "core-corpus",
+        "scenario": "iamouflage-sigma-cloudbuild-actas",
+        "scenario_path": "evaluation-pipeline/scenarios/iamouflage-sigma-cloudbuild-actas.yaml",
+        "scenario_sha256": "0f5f6663e2e9ed6bac7ec470437dda17fc10c4ec0b6854d2d3faf78c3cd5bd91",
+        "step_count": 3,
+        "steps": [
+          {
+            "admissible": true,
+            "description": "Enumerate IAM bindings org-wide to locate an impersonable privileged build service account.",
+            "published_rank": 2,
+            "rationale": "The identity holds cloudasset.assets.searchAllIamPolicies, allowing comprehensive enumeration of IAM policies across the target scope.",
+            "selected_technique": "discovery:gcp-iam-and-org-policies-enum:6",
+            "step_index": 0
+          },
+          {
+            "admissible": true,
+            "description": "Submit a Cloud Build job that runs as build-runner (actAs) to inherit its permissions.",
+            "published_rank": 1,
+            "rationale": "The current identity holds both `cloudbuild.builds.create` and `iam.serviceAccounts.actAs`. This enables executing code via Cloud Build under the `build-runner` service account without triggering any loaded detection rules.",
+            "selected_technique": "privilege-escalation:gcp-cloudbuild-privesc:1",
+            "step_index": 1
+          },
+          {
+            "admissible": true,
+            "description": "Read instance serial-port output to harvest secrets printed by startup scripts.",
+            "published_rank": 1,
+            "rationale": "The held permission compute.instances.getSerialPortOutput matches this discovery technique, allowing us to inspect serial console logs for sensitive information or credentials while avoiding all active detection rules.",
+            "selected_technique": "discovery:gcp-compute-instances-enum:1",
+            "step_index": 2
+          }
+        ],
+        "top_ranked_steps": 2,
+        "within_three_steps": 3
+      }
+    ],
+    "limitations": [
+      "The reviewer authored or knew the scenario objectives and reference routes.",
+      "A positive judgment means sufficient under the declared scripted transitions, not successful execution in GCP.",
+      "Outside loaded Boolean coverage is not evidence of real-world non-detection.",
+      "One selected run per scenario does not measure model reliability or run-to-run variance.",
+      "The GKE scenario is exploratory and is not evidence for the core GCP IAM scope."
+    ],
+    "review_date": "2026-08-16",
+    "review_design": "Single-reviewer, non-blinded inspection of one frozen successful Gemini report per bundled offline scenario. At each step the reviewer selected an admissible published recommendation that advanced the declared objective, then inspected the ordered route, validator evidence, rationale, and available runbook text.",
+    "reviewer_role": "thesis author and system operator",
+    "scenario_count": 4,
+    "selected_steps_within_top_three": 19,
+    "study_id": "manual-plan-review-v1",
+    "top_ranked_selected_steps": 18,
+    "total_reviewed_steps": 19
+  },
+  "mode": "full",
+  "normalization_audit": {
+    "normalized_records": {
+      "canonical_permission_occurrences": 445,
+      "detection_records": 192,
+      "flattening": {
+        "agreements": 192,
+        "records_checked": 192
+      },
+      "issues": [],
+      "operation_confidence": {
+        "exact": 66,
+        "none": 10,
+        "normalized": 256,
+        "official": 67,
+        "pattern": 18,
+        "unresolved": 1
+      },
+      "operation_kinds": {
+        "grpc_method": 68,
+        "k8s": 227,
+        "pattern": 18,
+        "permission": 78,
+        "rest_method": 23,
+        "unresolved": 4
+      },
+      "operation_occurrences": 418,
+      "paradigms": {
+        "correlation": 27,
+        "event": 153,
+        "ueba": 12
+      },
+      "planner_resolution_overlay": {
+        "aliases": 7,
+        "extensions": 3,
+        "occurrences_requiring_overlay": 10
+      },
+      "projection_loss": {
+        "correlation_rules": 27,
+        "empty_flattened_rows": 52,
+        "multiple_logical_groups": 70,
+        "records_with_unresolved_tokens": 9,
+        "rules_with_exclusions": 0,
+        "threshold_rules": 9,
+        "ueba_rules": 12,
+        "unique_unresolved_tokens": 7,
+        "unresolved_token_occurrences": 11,
+        "windowed_rules": 14
+      },
+      "reference_consistency": {
+        "agreements": 169,
+        "checked": 169,
+        "scope": "stored decisions with a directly named pinned permission, REST, or gRPC reference"
+      },
+      "status": "pass",
+      "technique_records": 279,
+      "techniques": {
+        "optional_permission_occurrences": 23,
+        "records_checked": 279,
+        "required_permission_occurrences": 424,
+        "with_required_permissions": 278
+      },
+      "traceability": {
+        "checked": 418,
+        "complete": 418
+      },
+      "unique_operation_tokens": 227
+    },
+    "planner_projection": {
+      "aggregate_coverage_permissions": 171,
+      "detection_permission_edges": 308,
+      "detection_row_agreements": 192,
+      "detection_rows_checked": 192,
+      "deterministic_rebuild": true,
+      "ingestion_issues": {
+        "empty_detection_row": 52,
+        "unsupported_empty_technique_requirements": 1
+      },
+      "issues": [],
+      "matrix_version": "sha256:057b9da58bacc36faa1bd517e71441b2d582db866738152f101b9f9e76aa95a2",
+      "permission_columns": 10132,
+      "status": "pass",
+      "technique_rows": 278,
+      "techniques_using_required_as_footprint": 278
+    },
+    "status": "pass"
+  },
+  "plan_quality_calibration": {
+    "cases": [
+      {
+        "case_id": "valid-reference-chain",
+        "executed_steps": 3,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": true,
+        "reference_failure_codes": ""
+      },
+      {
+        "case_id": "valid-concise-chain",
+        "executed_steps": 3,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": true,
+        "reference_failure_codes": ""
+      },
+      {
+        "case_id": "valid-alternative-route",
+        "executed_steps": 1,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": true,
+        "reference_failure_codes": ""
+      },
+      {
+        "case_id": "unknown-technique",
+        "executed_steps": 0,
+        "hard_acceptable": false,
+        "hard_failure_codes": "unknown_technique;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unknown_technique;objective_not_reached"
+      },
+      {
+        "case_id": "unmet-precondition",
+        "executed_steps": 0,
+        "hard_acceptable": false,
+        "hard_failure_codes": "unmet_precondition;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unmet_precondition;objective_not_reached"
+      },
+      {
+        "case_id": "covered-action",
+        "executed_steps": 1,
+        "hard_acceptable": false,
+        "hard_failure_codes": "covered_footprint;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "covered_footprint;objective_not_reached"
+      },
+      {
+        "case_id": "wrong-dependency-order",
+        "executed_steps": 1,
+        "hard_acceptable": false,
+        "hard_failure_codes": "unmet_precondition;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unmet_precondition;objective_not_reached"
+      },
+      {
+        "case_id": "incomplete-plan",
+        "executed_steps": 2,
+        "hard_acceptable": false,
+        "hard_failure_codes": "objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "objective_not_reached"
+      },
+      {
+        "case_id": "empty-plan",
+        "executed_steps": 0,
+        "hard_acceptable": false,
+        "hard_failure_codes": "empty_plan;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "empty_plan;objective_not_reached"
+      },
+      {
+        "case_id": "goal-on-detected-step",
+        "executed_steps": 1,
+        "hard_acceptable": false,
+        "hard_failure_codes": "covered_footprint;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "covered_footprint;objective_not_reached"
+      },
+      {
+        "case_id": "hard-valid-but-redundant",
+        "executed_steps": 4,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unnecessary_action"
+      },
+      {
+        "case_id": "hard-valid-but-overclaimed",
+        "executed_steps": 1,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unsupported_claim"
+      }
+    ],
+    "dataset_id": "plan-quality-calibration-v1",
+    "judge_results": null,
+    "metrics": {
+      "accept_precision": 0.6,
+      "accept_recall": 1.0,
+      "accuracy": 0.8333333333333334,
+      "balanced_accuracy": 0.8888888888888888,
+      "cohens_kappa": 0.6363636363636365,
+      "false_accept": 2,
+      "false_reject": 0,
+      "n": 12,
+      "reject_recall": 0.7777777777777778,
+      "true_accept": 3,
+      "true_reject": 7
+    }
+  },
+  "source_revision": "d06e93fe1d425e88243cef6770899cf64132629d",
+  "status": "thesis-evidence-bundle",
+  "validator_equivalence": {
+    "exhaustive": [
+      {
+        "cases": 16,
+        "disagreements": 0,
+        "elapsed_seconds": 0.03443929087370634,
+        "width": 1
+      },
+      {
+        "cases": 256,
+        "disagreements": 0,
+        "elapsed_seconds": 0.1645082081668079,
+        "width": 2
+      },
+      {
+        "cases": 4096,
+        "disagreements": 0,
+        "elapsed_seconds": 2.702977875014767,
+        "width": 3
+      },
+      {
+        "cases": 65536,
+        "disagreements": 0,
+        "elapsed_seconds": 44.31674583395943,
+        "width": 4
+      }
+    ],
+    "randomized_boundary_cases": [
+      {
+        "cases": 1691,
+        "disagreements": 0,
+        "elapsed_seconds": 1.2793781096115708,
+        "width": 8
+      },
+      {
+        "cases": 1703,
+        "disagreements": 0,
+        "elapsed_seconds": 1.3266764793079346,
+        "width": 63
+      },
+      {
+        "cases": 1617,
+        "disagreements": 0,
+        "elapsed_seconds": 1.2911634761840105,
+        "width": 64
+      },
+      {
+        "cases": 1691,
+        "disagreements": 0,
+        "elapsed_seconds": 1.3871290038805455,
+        "width": 65
+      },
+      {
+        "cases": 1682,
+        "disagreements": 0,
+        "elapsed_seconds": 1.546009348006919,
+        "width": 256
+      },
+      {
+        "cases": 1616,
+        "disagreements": 0,
+        "elapsed_seconds": 89.99643158866093,
+        "width": 10132
+      }
+    ],
+    "total_cases": 79904,
+    "total_disagreements": 0
+  },
+  "validator_latency": {
+    "measurements": [
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 17.625,
+        "median_microseconds": 0.875,
+        "minimum_microseconds": 0.791,
+        "p95_microseconds": 0.917,
+        "repetitions": 1000,
+        "width": 8
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 6483.583,
+        "median_microseconds": 612.9375,
+        "minimum_microseconds": 583.875,
+        "p95_microseconds": 782.083,
+        "repetitions": 1000,
+        "width": 8
+      },
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 1.333,
+        "median_microseconds": 1.0,
+        "minimum_microseconds": 0.917,
+        "p95_microseconds": 1.042,
+        "repetitions": 1000,
+        "width": 64
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 1147.416,
+        "median_microseconds": 653.875,
+        "minimum_microseconds": 621.208,
+        "p95_microseconds": 756.167,
+        "repetitions": 1000,
+        "width": 64
+      },
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 25.292,
+        "median_microseconds": 1.0,
+        "minimum_microseconds": 0.958,
+        "p95_microseconds": 1.084,
+        "repetitions": 1000,
+        "width": 256
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 1909.292,
+        "median_microseconds": 724.416,
+        "minimum_microseconds": 690.875,
+        "p95_microseconds": 854.167,
+        "repetitions": 1000,
+        "width": 256
+      },
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 48.459,
+        "median_microseconds": 2.958,
+        "minimum_microseconds": 2.833,
+        "p95_microseconds": 3.208,
+        "repetitions": 1000,
+        "width": 10132
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 362058.375,
+        "median_microseconds": 45861.875,
+        "minimum_microseconds": 43733.625,
+        "p95_microseconds": 59012.667,
+        "repetitions": 1000,
+        "width": 10132
+      }
+    ],
+    "repetitions": 1000,
+    "warmups": 100
+  },
+  "working_tree_dirty": true
+}

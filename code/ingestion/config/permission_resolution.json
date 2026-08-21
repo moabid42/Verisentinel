@@ -1,0 +1,17 @@
+{
+  "aliases": {
+    "accesscontextmanager.accessPolicies.delete": "accesscontextmanager.policies.delete",
+    "iam.workforcePools.create": "iam.googleapis.com-workforcePools.create",
+    "iam.workforcePools.update": "iam.googleapis.com-workforcePools.update",
+    "iam.workloadIdentityPoolProviders.create": "iam.googleapis.com-workloadIdentityPoolProviders.create",
+    "iam.workloadIdentityPoolProviders.update": "iam.googleapis.com-workloadIdentityPoolProviders.update",
+    "iam.workloadIdentityPools.delete": "iam.googleapis.com-workloadIdentityPools.delete",
+    "iam.workloadIdentityPools.update": "iam.googleapis.com-workloadIdentityPools.update"
+  },
+  "extensions": {
+    "iap.tunnelServices.setIamPolicy": "Present in the pinned IAMouflage Panther rule but absent from the pinned permission catalog.",
+    "serviceusage.apiKeys.getProjectForKey": "Present in the pinned IAMouflage technique catalog but absent from the pinned permission catalog.",
+    "storage.buckets.setIpFilter": "Present in role_permissions.json but absent from permissions.json in the pinned IAM dataset."
+  }
+}
+

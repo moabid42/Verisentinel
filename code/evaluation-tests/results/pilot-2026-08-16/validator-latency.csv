@@ -1,0 +1,9 @@
+engine,maximum_microseconds,median_microseconds,minimum_microseconds,p95_microseconds,repetitions,width
+Direct bitset,6.042,0.875,0.791,0.917,1000,8
+Z3 bit-vector,1045.042,588.125,568.25,722.042,1000,8
+Direct bitset,1.333,1.0,0.917,1.083,1000,64
+Z3 bit-vector,1466.375,628.708,608.833,796.083,1000,64
+Direct bitset,1.625,1.0,0.958,1.084,1000,256
+Z3 bit-vector,3701.0,715.25,677.208,1111.375,1000,256
+Direct bitset,11.75,3.0,2.875,3.084,1000,10132
+Z3 bit-vector,406628.875,46259.208,44487.875,56524.125,1000,10132

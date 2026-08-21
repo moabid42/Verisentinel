@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="360" viewBox="0 0 820 360" role="img" aria-label="Hard-gate calibration against reference labels">
+<rect width="820" height="360" fill="#ffffff"/>
+<text x="30.00" y="38.00" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1f2937">Hard-gate calibration against reference labels</text>
+<text x="30.00" y="64.00" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" text-anchor="start" fill="#64748b">Counts from the labelled synthetic calibration set (n = 12)</text>
+<text x="30.00" y="150.00" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" text-anchor="start" fill="#1f2937">Reference-acceptable plans</text>
+<rect x="235.00" y="125.00" width="170.00" height="44.00" rx="4.00" fill="#2e7d32"/>
+<text x="245.00" y="153.00" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" text-anchor="start" fill="#ffffff">3</text>
+<text x="235.00" y="189.00" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" text-anchor="start" fill="#64748b">correctly accepted</text>
+<text x="30.00" y="245.00" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" text-anchor="start" fill="#1f2937">Reference-rejected plans</text>
+<rect x="235.00" y="220.00" width="396.67" height="44.00" rx="4.00" fill="#2e7d32"/>
+<rect x="631.67" y="220.00" width="113.33" height="44.00" rx="4.00" fill="#ef6c00"/>
+<text x="245.00" y="248.00" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" text-anchor="start" fill="#ffffff">7</text>
+<text x="641.67" y="248.00" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" text-anchor="start" fill="#ffffff">2</text>
+<text x="235.00" y="284.00" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" text-anchor="start" fill="#64748b">correctly rejected</text>
+<text x="635.67" y="284.00" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" text-anchor="start" fill="#ef6c00">semantic false accepts</text>
+<rect x="205.00" y="303.00" width="18.00" height="18.00" rx="3.00" fill="#2e7d32"/>
+<text x="232.00" y="317.00" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" text-anchor="start" fill="#1f2937">hard gate agrees with reference</text>
+<rect x="500.00" y="303.00" width="18.00" height="18.00" rx="3.00" fill="#ef6c00"/>
+<text x="527.00" y="317.00" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" text-anchor="start" fill="#1f2937">requires semantic QA</text>
+</svg>

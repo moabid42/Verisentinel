@@ -1,0 +1,67 @@
+{
+  "study_id": "manual-plan-review-v1",
+  "review_date": "2026-08-16",
+  "reviewer_role": "thesis author and system operator",
+  "review_design": "Single-reviewer, non-blinded inspection of one frozen successful Gemini report per bundled offline scenario. At each step the reviewer selected an admissible published recommendation that advanced the declared objective, then inspected the ordered route, validator evidence, rationale, and available runbook text.",
+  "limitations": [
+    "The reviewer authored or knew the scenario objectives and reference routes.",
+    "A positive judgment means sufficient under the declared scripted transitions, not successful execution in GCP.",
+    "Outside loaded Boolean coverage is not evidence of real-world non-detection.",
+    "One selected run per scenario does not measure model reliability or run-to-run variance.",
+    "The GKE scenario is exploratory and is not evidence for the core GCP IAM scope."
+  ],
+  "cases": [
+    {
+      "scenario_id": "artifactregistry-supply-chain-exfil",
+      "role": "core-inline",
+      "scenario": "evaluation-pipeline/scenarios/artifactregistry-supply-chain-exfil.yaml",
+      "report": "evaluation-pipeline/runs/20260805T172402Z_batch_abbd6759c80d4c699218cbc557510d8f/artifactregistry-supply-chain-exfil/report.json",
+      "judgments": {
+        "objective_path_sufficient": true,
+        "ordering_coherent": true,
+        "instructions_sufficient": true,
+        "model_boundary_acknowledged": true
+      },
+      "rationale": "The six selected actions form a complete dependency chain: enumerate and inspect the Cloud Run target, poison its image, deploy the revision as the runtime identity, obtain the stored credential, and use the resulting BigQuery permissions for export. Each selected action was validator-admissible at its recorded step, and the descriptions and rationales were sufficient for the reviewer to understand how the declared objective would be reached under the scenario contract."
+    },
+    {
+      "scenario_id": "cloudfunctions-actas-secret-exfil",
+      "role": "core-inline",
+      "scenario": "evaluation-pipeline/scenarios/cloudfunctions-actas-secret-exfil.yaml",
+      "report": "evaluation-pipeline/runs/20260805T172402Z_batch_abbd6759c80d4c699218cbc557510d8f/cloudfunctions-actas-secret-exfil/report.json",
+      "judgments": {
+        "objective_path_sufficient": true,
+        "ordering_coherent": true,
+        "instructions_sufficient": true,
+        "model_boundary_acknowledged": true
+      },
+      "rationale": "The four selected actions enumerate the target identity, deploy a function as that identity, access the declared secret, and extract the BigQuery table. The scripted gains make the dependencies explicit, every selected action was admissible when reviewed, and the recorded descriptions were sufficient to explain the objective-reaching route."
+    },
+    {
+      "scenario_id": "gke-workload-pivot-metadata",
+      "role": "exploratory-inline",
+      "scenario": "evaluation-pipeline/scenarios/gke-workload-pivot-metadata.yaml",
+      "report": "evaluation-pipeline/runs/20260805T172402Z_batch_abbd6759c80d4c699218cbc557510d8f/gke-workload-pivot-metadata/report.json",
+      "judgments": {
+        "objective_path_sufficient": true,
+        "ordering_coherent": true,
+        "instructions_sufficient": true,
+        "model_boundary_acknowledged": true
+      },
+      "rationale": "The six selected actions progress from cluster discovery through credential acquisition and pod enumeration to a privileged workload pivot, serial-output access, and the final secret read. The order respects the scenario's declared capability gains and was sufficient for manual understanding, but the case remains exploratory because Kubernetes RBAC is outside the core thesis scope."
+    },
+    {
+      "scenario_id": "iamouflage-sigma-cloudbuild-actas",
+      "role": "core-corpus",
+      "scenario": "evaluation-pipeline/scenarios/iamouflage-sigma-cloudbuild-actas.yaml",
+      "report": "evaluation-pipeline/runs/20260814T140335Z_iamouflage-sigma-cloudbuild-actas/report.json",
+      "judgments": {
+        "objective_path_sufficient": true,
+        "ordering_coherent": true,
+        "instructions_sufficient": true,
+        "model_boundary_acknowledged": true
+      },
+      "rationale": "The reviewed route first uses Cloud Asset IAM enumeration to identify the build-runner identity, then uses Cloud Build with actAs, and finally reads serial-port output using the acquired permission. The first action appeared at rank two, so the result demonstrates the intended human choice among three validated recommendations rather than autonomous top-one planning. The IAMouflage source excerpts supplied concrete procedural detail for the selected techniques."
+    }
+  ]
+}

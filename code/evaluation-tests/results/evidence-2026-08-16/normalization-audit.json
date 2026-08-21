@@ -1,0 +1,86 @@
+{
+  "normalized_records": {
+    "canonical_permission_occurrences": 445,
+    "detection_records": 192,
+    "flattening": {
+      "agreements": 192,
+      "records_checked": 192
+    },
+    "issues": [],
+    "operation_confidence": {
+      "exact": 66,
+      "none": 10,
+      "normalized": 256,
+      "official": 67,
+      "pattern": 18,
+      "unresolved": 1
+    },
+    "operation_kinds": {
+      "grpc_method": 68,
+      "k8s": 227,
+      "pattern": 18,
+      "permission": 78,
+      "rest_method": 23,
+      "unresolved": 4
+    },
+    "operation_occurrences": 418,
+    "paradigms": {
+      "correlation": 27,
+      "event": 153,
+      "ueba": 12
+    },
+    "planner_resolution_overlay": {
+      "aliases": 7,
+      "extensions": 3,
+      "occurrences_requiring_overlay": 10
+    },
+    "projection_loss": {
+      "correlation_rules": 27,
+      "empty_flattened_rows": 52,
+      "multiple_logical_groups": 70,
+      "records_with_unresolved_tokens": 9,
+      "rules_with_exclusions": 0,
+      "threshold_rules": 9,
+      "ueba_rules": 12,
+      "unique_unresolved_tokens": 7,
+      "unresolved_token_occurrences": 11,
+      "windowed_rules": 14
+    },
+    "reference_consistency": {
+      "agreements": 169,
+      "checked": 169,
+      "scope": "stored decisions with a directly named pinned permission, REST, or gRPC reference"
+    },
+    "status": "pass",
+    "technique_records": 279,
+    "techniques": {
+      "optional_permission_occurrences": 23,
+      "records_checked": 279,
+      "required_permission_occurrences": 424,
+      "with_required_permissions": 278
+    },
+    "traceability": {
+      "checked": 418,
+      "complete": 418
+    },
+    "unique_operation_tokens": 227
+  },
+  "planner_projection": {
+    "aggregate_coverage_permissions": 171,
+    "detection_permission_edges": 308,
+    "detection_row_agreements": 192,
+    "detection_rows_checked": 192,
+    "deterministic_rebuild": true,
+    "ingestion_issues": {
+      "empty_detection_row": 52,
+      "unsupported_empty_technique_requirements": 1
+    },
+    "issues": [],
+    "matrix_version": "sha256:057b9da58bacc36faa1bd517e71441b2d582db866738152f101b9f9e76aa95a2",
+    "permission_columns": 10132,
+    "status": "pass",
+    "technique_rows": 278,
+    "techniques_using_required_as_footprint": 278
+  },
+  "status": "pass"
+}

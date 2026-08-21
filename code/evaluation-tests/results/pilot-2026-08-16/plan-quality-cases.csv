@@ -1,0 +1,13 @@
+case_id,reference_acceptable,hard_acceptable,reference_failure_codes,hard_failure_codes,executed_steps
+valid-reference-chain,True,True,,,3
+valid-concise-chain,True,True,,,3
+valid-alternative-route,True,True,,,1
+unknown-technique,False,False,unknown_technique;objective_not_reached,unknown_technique;objective_not_reached,0
+unmet-precondition,False,False,unmet_precondition;objective_not_reached,unmet_precondition;objective_not_reached,0
+covered-action,False,False,covered_footprint;objective_not_reached,covered_footprint;objective_not_reached,1
+wrong-dependency-order,False,False,unmet_precondition;objective_not_reached,unmet_precondition;objective_not_reached,1
+incomplete-plan,False,False,objective_not_reached,objective_not_reached,2
+empty-plan,False,False,empty_plan;objective_not_reached,empty_plan;objective_not_reached,0
+goal-on-detected-step,False,False,covered_footprint;objective_not_reached,covered_footprint;objective_not_reached,1
+hard-valid-but-redundant,False,True,unnecessary_action,,4
+hard-valid-but-overclaimed,False,True,unsupported_claim,,1

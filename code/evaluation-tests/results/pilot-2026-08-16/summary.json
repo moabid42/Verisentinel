@@ -1,0 +1,316 @@
+{
+  "corpus_snapshot": {
+    "detection_permission_edges": 50,
+    "detection_sources": {
+      "sigma": 26
+    },
+    "enabled_detection_rows": 26,
+    "executable_techniques": 278,
+    "iam_dataset_version": "sha256:e1132fc7da70b2f946829767a932b7eda3b63f18dd6cc3104809d170e0e0de8b",
+    "iamouflage_version": "sha256:53771adf4855dbc4f19e41f8cd5da4d8d9666f795ab23068093ff9c6dcc8a717",
+    "ingestion_issue_counts": {
+      "empty_detection_row": 11,
+      "unsupported_empty_technique_requirements": 1
+    },
+    "ingestion_issue_total": 12,
+    "matrix_version": "sha256:76ac9817cdefd270a51cd3a56adae498bfa1672d43d2feac15f18797de613196",
+    "permission_columns": 10132,
+    "represented_coverage_permissions": 50,
+    "scenario": "iamouflage-sigma-cloudbuild-actas",
+    "source_detection_records": 192,
+    "source_technique_records": 279,
+    "technique_footprint_edges": 424,
+    "technique_requirement_edges": 424
+  },
+  "environment": {
+    "machine": "arm64",
+    "platform": "macOS-15.7.7-arm64-arm-64bit-Mach-O",
+    "python": "3.13.5",
+    "z3": "4.16.0"
+  },
+  "generated_at": "2026-08-16T11:07:20.597688+00:00",
+  "inputs": {
+    "cases": {
+      "path": "evaluation-tests/cases/plan-quality-cases.json",
+      "sha256": "06a525eedfd42aa532fd50422ed4c6589444e1f8b0822744444414427f272ef5"
+    },
+    "corpus_scenario": {
+      "path": "evaluation-pipeline/scenarios/iamouflage-sigma-cloudbuild-actas.yaml",
+      "sha256": "0f5f6663e2e9ed6bac7ec470437dda17fc10c4ec0b6854d2d3faf78c3cd5bd91"
+    },
+    "judge_prompt": {
+      "path": "evaluation-tests/prompts/quality-judge.md",
+      "sha256": "d9ddc9112417258519ba1bd74a27a03e89c7aa304e7ecf3e5b5cb30bc80f4af5"
+    },
+    "random_seed": 20260816,
+    "rubric": {
+      "path": "evaluation-tests/rubrics/plan-quality-rubric.json",
+      "sha256": "532b474ca65c073d1d5c9b42d57d7d5d20857bfae23b8c3e5b47857e5ee28525"
+    }
+  },
+  "mode": "full",
+  "plan_quality_calibration": {
+    "cases": [
+      {
+        "case_id": "valid-reference-chain",
+        "executed_steps": 3,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": true,
+        "reference_failure_codes": ""
+      },
+      {
+        "case_id": "valid-concise-chain",
+        "executed_steps": 3,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": true,
+        "reference_failure_codes": ""
+      },
+      {
+        "case_id": "valid-alternative-route",
+        "executed_steps": 1,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": true,
+        "reference_failure_codes": ""
+      },
+      {
+        "case_id": "unknown-technique",
+        "executed_steps": 0,
+        "hard_acceptable": false,
+        "hard_failure_codes": "unknown_technique;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unknown_technique;objective_not_reached"
+      },
+      {
+        "case_id": "unmet-precondition",
+        "executed_steps": 0,
+        "hard_acceptable": false,
+        "hard_failure_codes": "unmet_precondition;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unmet_precondition;objective_not_reached"
+      },
+      {
+        "case_id": "covered-action",
+        "executed_steps": 1,
+        "hard_acceptable": false,
+        "hard_failure_codes": "covered_footprint;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "covered_footprint;objective_not_reached"
+      },
+      {
+        "case_id": "wrong-dependency-order",
+        "executed_steps": 1,
+        "hard_acceptable": false,
+        "hard_failure_codes": "unmet_precondition;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unmet_precondition;objective_not_reached"
+      },
+      {
+        "case_id": "incomplete-plan",
+        "executed_steps": 2,
+        "hard_acceptable": false,
+        "hard_failure_codes": "objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "objective_not_reached"
+      },
+      {
+        "case_id": "empty-plan",
+        "executed_steps": 0,
+        "hard_acceptable": false,
+        "hard_failure_codes": "empty_plan;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "empty_plan;objective_not_reached"
+      },
+      {
+        "case_id": "goal-on-detected-step",
+        "executed_steps": 1,
+        "hard_acceptable": false,
+        "hard_failure_codes": "covered_footprint;objective_not_reached",
+        "reference_acceptable": false,
+        "reference_failure_codes": "covered_footprint;objective_not_reached"
+      },
+      {
+        "case_id": "hard-valid-but-redundant",
+        "executed_steps": 4,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unnecessary_action"
+      },
+      {
+        "case_id": "hard-valid-but-overclaimed",
+        "executed_steps": 1,
+        "hard_acceptable": true,
+        "hard_failure_codes": "",
+        "reference_acceptable": false,
+        "reference_failure_codes": "unsupported_claim"
+      }
+    ],
+    "dataset_id": "plan-quality-calibration-v1",
+    "judge_results": null,
+    "metrics": {
+      "accept_precision": 0.6,
+      "accept_recall": 1.0,
+      "accuracy": 0.8333333333333334,
+      "balanced_accuracy": 0.8888888888888888,
+      "cohens_kappa": 0.6363636363636365,
+      "false_accept": 2,
+      "false_reject": 0,
+      "n": 12,
+      "reject_recall": 0.7777777777777778,
+      "true_accept": 3,
+      "true_reject": 7
+    }
+  },
+  "source_revision": "68fb702edacbac6f22e07040b4def63a1e4c8d9b",
+  "status": "pilot-harness-calibration-not-final-study",
+  "validator_equivalence": {
+    "exhaustive": [
+      {
+        "cases": 16,
+        "disagreements": 0,
+        "elapsed_seconds": 0.04072787496261299,
+        "width": 1
+      },
+      {
+        "cases": 256,
+        "disagreements": 0,
+        "elapsed_seconds": 0.16041849995963275,
+        "width": 2
+      },
+      {
+        "cases": 4096,
+        "disagreements": 0,
+        "elapsed_seconds": 2.457765500061214,
+        "width": 3
+      },
+      {
+        "cases": 65536,
+        "disagreements": 0,
+        "elapsed_seconds": 45.01279120799154,
+        "width": 4
+      }
+    ],
+    "randomized_boundary_cases": [
+      {
+        "cases": 1691,
+        "disagreements": 0,
+        "elapsed_seconds": 1.3423312907107174,
+        "width": 8
+      },
+      {
+        "cases": 1703,
+        "disagreements": 0,
+        "elapsed_seconds": 1.4243874598760158,
+        "width": 63
+      },
+      {
+        "cases": 1617,
+        "disagreements": 0,
+        "elapsed_seconds": 1.3329798413906246,
+        "width": 64
+      },
+      {
+        "cases": 1691,
+        "disagreements": 0,
+        "elapsed_seconds": 1.395571489352733,
+        "width": 65
+      },
+      {
+        "cases": 1682,
+        "disagreements": 0,
+        "elapsed_seconds": 1.6133599816821516,
+        "width": 256
+      },
+      {
+        "cases": 1616,
+        "disagreements": 0,
+        "elapsed_seconds": 94.12847696105018,
+        "width": 10132
+      }
+    ],
+    "total_cases": 79904,
+    "total_disagreements": 0
+  },
+  "validator_latency": {
+    "measurements": [
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 6.042,
+        "median_microseconds": 0.875,
+        "minimum_microseconds": 0.791,
+        "p95_microseconds": 0.917,
+        "repetitions": 1000,
+        "width": 8
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 1045.042,
+        "median_microseconds": 588.125,
+        "minimum_microseconds": 568.25,
+        "p95_microseconds": 722.042,
+        "repetitions": 1000,
+        "width": 8
+      },
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 1.333,
+        "median_microseconds": 1.0,
+        "minimum_microseconds": 0.917,
+        "p95_microseconds": 1.083,
+        "repetitions": 1000,
+        "width": 64
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 1466.375,
+        "median_microseconds": 628.708,
+        "minimum_microseconds": 608.833,
+        "p95_microseconds": 796.083,
+        "repetitions": 1000,
+        "width": 64
+      },
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 1.625,
+        "median_microseconds": 1.0,
+        "minimum_microseconds": 0.958,
+        "p95_microseconds": 1.084,
+        "repetitions": 1000,
+        "width": 256
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 3701.0,
+        "median_microseconds": 715.25,
+        "minimum_microseconds": 677.208,
+        "p95_microseconds": 1111.375,
+        "repetitions": 1000,
+        "width": 256
+      },
+      {
+        "engine": "Direct bitset",
+        "maximum_microseconds": 11.75,
+        "median_microseconds": 3.0,
+        "minimum_microseconds": 2.875,
+        "p95_microseconds": 3.084,
+        "repetitions": 1000,
+        "width": 10132
+      },
+      {
+        "engine": "Z3 bit-vector",
+        "maximum_microseconds": 406628.875,
+        "median_microseconds": 46259.208,
+        "minimum_microseconds": 44487.875,
+        "p95_microseconds": 56524.125,
+        "repetitions": 1000,
+        "width": 10132
+      }
+    ],
+    "repetitions": 1000,
+    "warmups": 100
+  },
+  "working_tree_dirty": true
+}

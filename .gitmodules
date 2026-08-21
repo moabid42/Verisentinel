@@ -1,0 +1,6 @@
+[submodule "code/IAMouflage"]
+	path = code/IAMouflage
+	url = https://github.com/moabid42/IAMouflage.git
+[submodule "data/iam-dataset"]
+	path = data/iam-dataset
+	url = https://github.com/iann0036/iam-dataset.git

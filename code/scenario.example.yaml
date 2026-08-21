@@ -1,0 +1,31 @@
+name: storage-access-evaluation
+objective: Evaluate unmonitored paths available to the starting service account
+operator: human-operator@example.com
+target_scope: projects/replace-with-authorized-sandbox-project
+
+starting_service_account:
+  identity: starting-service-account@replace-with-project.iam.gserviceaccount.com
+  access_token: REPLACE_WITH_SHORT_LIVED_OAUTH_ACCESS_TOKEN
+  permissions:
+    # These must be the effective permissions already known at target_scope.
+    - storage.objects.get
+
+# Select an exact detection profile for reproducible validation.
+detections:
+  sources:
+    - sigma
+  strict: true
+
+# Optional reproducibility controls. Values omitted here use the .env/default configuration.
+model:
+  name: gemini-3.6-flash
+  fallback_models:
+    - gemini-3.1-flash-lite
+  api_mode: generate_content
+  thinking_level: medium
+  timeout_seconds: 45
+  maximum_attempts: 2
+  heartbeat_seconds: 5
+
+# The isolated, automatically-scored evaluation harness is a separate pipeline; see
+# evaluation-pipeline/scenario.yaml and its own entrypoint.

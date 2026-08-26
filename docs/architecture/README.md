@@ -3,8 +3,9 @@
 This directory records the accepted boundaries and planned evolution of the
 Verisentinel application. The current application remains the deterministic,
 human-gated planner described in [`code/README.md`](../../code/README.md). These
-documents define future changes; they do not claim that the planned providers,
-commands, or copilot adapters are implemented.
+documents record the implemented execution foundation and define later changes.
+The planned capsule provider, Typer commands, and copilot adapters are not
+implemented.
 
 ## Decision Records
 

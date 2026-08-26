@@ -63,7 +63,7 @@ Verisentinel/
 │   ├── proposer/          Gemini structured ranking, restricted to cataloged techniques only
 │   ├── green_agent/       Engagement lifecycle + orchestration state machine
 │   ├── launchpad/         Human-review API and dashboard (publishes ≤ 3 candidate cards)
-│   ├── execution/         Approval, scope, registry, kill-switch, and the simulator boundary
+│   ├── execution/         Approval, credential leasing, provider dispatch, and attempt records
 │   ├── runner/            Direct scenario loader + terminal launchpad — the main entrypoint
 │   ├── evaluation-pipeline/  Offline proposer+validator harness with ground-truth scenario solutions
 │   ├── evaluation-tests/  Reproducible evidence harness (validator equivalence, corpus audit, plan review)
@@ -116,7 +116,9 @@ flowchart TD
   permissions and intersecting detection rows. The bitset result is cross-checked against Z3.
 - **green_agent** runs the cycle and holds exclusive authority over what gets published.
 - **launchpad** shows the operator at most three admissible candidates and records the explicit choice.
-- **execution** re-validates the approved action and runs it through the simulator boundary.
+- **execution** re-validates the approved action, atomically consumes its
+  approval, resolves a short-lived credential lease, and dispatches through the
+  provider boundary. The deterministic simulator is the only built-in provider.
 - **environment** applies the resulting observation to produce the next immutable state version.
 
 ---

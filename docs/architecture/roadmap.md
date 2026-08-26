@@ -1,14 +1,15 @@
 # Agentic Copilot and Controlled Execution Roadmap
 
-- Status: Planned
+- Status: Milestone 1 implemented; Milestones 2-5 planned
 - Last updated: 2026-08-26
 
 ## Purpose
 
 This roadmap sequences the accepted architecture into independently reversible
-milestones. It is not an implementation-status claim. The current supported
-workflow remains the deterministic simulator described in
-[`code/README.md`](../../code/README.md).
+milestones. Milestone 1 is implemented. The current supported workflow remains
+the deterministic simulator described in
+[`code/README.md`](../../code/README.md); later milestones remain plans rather
+than implementation-status claims.
 
 Each milestone must preserve the authority split in [ADR-0001](decisions/0001-copilot-orchestration-boundaries.md)
 and the fail-closed execution boundary in [ADR-0002](decisions/0002-execution-credential-boundaries.md).
@@ -30,6 +31,11 @@ roadmap; both require a later decision record.
   limited to independent components with non-overlapping files and tests.
 
 ## Milestone 1: Execution Foundation
+
+Implementation completed on 2026-08-26. The execution boundary now uses opaque
+credential references, typed credential sources and leases, immutable action and
+execution contracts, atomic approval-attempt records, and a common provider
+protocol with the deterministic simulator as its only built-in provider.
 
 ### 1A. Replace embedded credentials
 

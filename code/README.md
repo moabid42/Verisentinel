@@ -42,7 +42,7 @@ flowchart LR
         Proposer["Gemini Technique Proposer<br/>structured catalog-only ranking"]
         Validator["Boolean Validator<br/>bitset plus Z3 equivalence check"]
         Launchpad["Operator Launchpad<br/>up to three candidate cards"]
-        Execution["Guarded Execution<br/>approval checks and simulator"]
+        Execution["Guarded Execution<br/>provider boundary and simulator"]
         Runtime["Versioned runtime JSON<br/>states, decisions, approvals, results"]
 
         Green --> Environment
@@ -114,7 +114,7 @@ code/
 ├── proposer/      Candidate retrieval and required Gemini structured ranking
 ├── green_agent/   Engagement lifecycle and orchestration
 ├── launchpad/     Human review API and HTML dashboard
-├── execution/     Approval, scope, registry, kill-switch, and simulator boundary
+├── execution/     Approval, typed actions, credential leases, providers, and attempts
 ├── runner/        Direct scenario loader, terminal launchpad, and debug tracing
 ├── tests/         Main planner unit tests
 ├── IAMouflage/    Git submodule that builds the detection/technique knowledge exports
@@ -325,19 +325,20 @@ without relying on hidden reasoning internals.
 
 ## Isolated evaluation pipeline
 
-The generated Sigma scenario starts a disposable loopback-only IAM target, runs positive and
-negative detector controls, automatically approves only the model's highest-ranked admissible
-registered action, and writes a scored report:
+The evaluation pipeline uses its own offline state schema, automatically selects
+only admissible registered actions according to its evaluation policy, and
+writes a scored report:
 
 ```bash
-.venv/bin/python run.py --scenario=evaluation-pipeline/scenario.yaml
+.venv/bin/python evaluation-pipeline/run.py \
+  --scenario=evaluation-pipeline/scenarios/iamouflage-sigma-cloudbuild-actas.yaml
 ```
 
-The scenario's synthetic `starting_service_account.access_token` is the first target entrypoint.
-It stays inside the credential/execution boundary and is never included in the Gemini prompt or
-generated reports. Run artifacts land under `evaluation-pipeline/runs/`. See
-[`evaluation-pipeline/README.md`](evaluation-pipeline/README.md) for the lifecycle, assertions, and
-scenario fields.
+The evaluation pipeline does not load an execution credential or invoke the
+maintained execution boundary. Run artifacts land under
+`evaluation-pipeline/runs/`. See
+[`evaluation-pipeline/README.md`](evaluation-pipeline/README.md) for its
+lifecycle, assertions, and scenario fields.
 
 The HTTP applications remain in the repository for later service deployment, but `run.py` does not
 use them.
@@ -372,7 +373,7 @@ Every service can be started with Uvicorn when direct API testing is useful:
 | Proposer | `http://proposer:8004` | `proposer.api:app` | known-technique proposals |
 | Green agent | `http://green-agent:8005` | `green_agent.api:app` | engagement lifecycle |
 | Launchpad | `http://launchpad:8006` | `launchpad.api:app` | operator dashboard and decisions |
-| Execution | `http://execution:8007` | `execution.api:app` | approval and simulator boundary |
+| Execution | `http://execution:8007` | `execution.api:app` | guarded provider boundary |
 
 There is no main-project Docker Compose file or all-services launcher. These APIs are not used by
 the current direct runner.
@@ -390,7 +391,7 @@ the current direct runner.
 | `LAUNCHPAD_URL` | local in-process service when unset in green agent | candidate publication gateway |
 | `GREEN_AGENT_URL` | no decision forwarding when unset in launchpad | decision sink |
 | `EXECUTION_URL` | local in-process simulator when unset in green agent | execution gateway |
-| `EXECUTION_PROVIDER` | `simulator` | executor selection; only simulator exists |
+| `EXECUTION_PROVIDER` | `simulator` | built-in provider selection; unknown values fail assembly |
 | `EXECUTION_ENABLED` | `true` for simulator | execution kill switch |
 | `VALIDATOR_ENGINE` | `bitset` | `bitset` or `smt` result engine |
 | `VALIDATOR_VERIFY_SMT` | `true` | compare bitset result with Z3 |
@@ -415,6 +416,18 @@ command strings, and other free-form arguments fail validation. The spec binds t
 identity, target, credential reference, validator result, approval, state version, and matrix
 version before it can reach a provider. Existing persisted requests with an empty `arguments`
 object remain readable.
+
+`ExecutionService` applies one common path for the kill switch, exact approval
+and version checks, registered action resolution, atomic attempt reservation,
+late credential resolution, provider invocation, observation validation, and
+record finalization. Starting an attempt consumes the approval even when
+credential resolution or the provider fails, times out, is cancelled, or is
+interrupted. A retry therefore requires a new validation and explicit approval.
+
+Provider observations must match the approved engagement, action, identity, and
+target. They are size-bounded and rejected if they reproduce credential
+material. Persisted attempt records contain only identifiers, provider name,
+status, timestamps, and a fixed non-sensitive outcome code.
 
 ## Generated state
 
@@ -515,8 +528,9 @@ latest `runtime/traces/*.jsonl` file for request start, timeout, retry, response
 - The launchpad dashboard and decision endpoint do not implement user login, RBAC, or CSRF defense.
 - Ingestion, environment, validator, and proposer APIs are not authenticated.
 - `code/.env` and `code/scenario.yaml` are ignored; never force-add them to Git.
-- The direct runner stores the access token only in memory and persists an opaque credential
-  reference. It also redacts configured secrets from trace strings.
+- The direct runner passes only a source descriptor and opaque reference to the
+  execution boundary. Credential material exists only in a short-lived lease
+  around one provider call and is cleared on every exit path.
 - SHA-256 versions and digests provide integrity binding, not encryption.
 - Keep `EXECUTION_PROVIDER=simulator`; no real GCP provider is implemented.
 - The control token is an internal shared secret, not a complete production identity system.

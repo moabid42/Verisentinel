@@ -9,6 +9,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from core.errors import NotFoundError
+from execution.credentials import (
+    CredentialResolver,
+    CredentialSourceError,
+    parse_credential_source,
+)
 from runner.scenario import PlannerScenario, ScenarioError, load_scenario
 from runner.terminal import parse_choice, render_candidates
 
@@ -26,6 +31,12 @@ def parser() -> argparse.ArgumentParser:
         help="path to the planner scenario YAML",
     )
     command.add_argument(
+        "--credential-source",
+        required=True,
+        metavar="SOURCE",
+        help="credential source: stdin, file:<path>, env:<name>, adc, or impersonate:<principal>",
+    )
+    command.add_argument(
         "--rebuild-snapshot",
         action="store_true",
         help="rebuild the IAM coverage snapshot before starting",
@@ -41,6 +52,11 @@ def parser() -> argparse.ArgumentParser:
 def main(arguments: list[str] | None = None) -> int:
     options = parser().parse_args(arguments)
     load_dotenv(CODE_DIRECTORY / ".env", override=False)
+    try:
+        credential_source = parse_credential_source(options.credential_source)
+    except CredentialSourceError:
+        print("Credential source error: unsupported or invalid descriptor", file=sys.stderr)
+        return 2
     try:
         scenario = load_scenario(options.scenario.expanduser().resolve())
     except ScenarioError as error:
@@ -122,7 +138,17 @@ def main(arguments: list[str] | None = None) -> int:
         )
         proposer = ProposerService(snapshots=snapshots, gemini=gemini, paths=paths)
         launchpad = LaunchpadService(paths=paths)
-        execution = ExecutionService(snapshots=snapshots, paths=paths, trace=trace)
+        credential_resolver = CredentialResolver()
+        credential_resolver.register(
+            scenario.starting_service_account.credential_ref,
+            credential_source,
+        )
+        execution = ExecutionService(
+            snapshots=snapshots,
+            paths=paths,
+            credential_resolver=credential_resolver,
+            trace=trace,
+        )
         planner = GreenAgent(
             snapshots=snapshots,
             proposer=proposer,

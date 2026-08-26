@@ -7,6 +7,7 @@ import yaml
 from pydantic import Field, ValidationError, field_validator
 
 from core.models import ImmutableModel
+from execution.credentials import CREDENTIAL_REFERENCE_PATTERN
 
 
 class ScenarioError(ValueError):
@@ -18,7 +19,7 @@ class StartingServiceAccount(ImmutableModel):
     credential_ref: str = Field(
         min_length=1,
         max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+        pattern=CREDENTIAL_REFERENCE_PATTERN,
     )
     permissions: tuple[str, ...] = Field(min_length=1)
 

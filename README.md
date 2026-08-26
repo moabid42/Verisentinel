@@ -69,7 +69,7 @@ Verisentinel/
 │   ├── evaluation-tests/  Reproducible evidence harness (validator equivalence, corpus audit, plan review)
 │   ├── tests/             Planner unit tests
 │   ├── IAMouflage/        ← submodule (detection/technique knowledge builder + exports)
-│   ├── run.py             Entrypoint: `python run.py --scenario=scenario.yaml`
+│   ├── run.py             Entrypoint: `python run.py --scenario=... --credential-source=...`
 │   └── README.md          Full, detailed usage and configuration reference
 └── data/
     └── iam-dataset/       ← submodule (GCP IAM permission catalog)
@@ -150,7 +150,7 @@ cp scenario.example.yaml scenario.yaml     # then describe your authorized start
 **4. Run the human-gated loop:**
 
 ```bash
-.venv/bin/python run.py --scenario=scenario.yaml
+.venv/bin/python run.py --scenario=scenario.yaml --credential-source=adc
 ```
 
 Gemini ranks cataloged techniques, the validator filters them, and the terminal launchpad shows up

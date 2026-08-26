@@ -10,6 +10,7 @@ from core.models import (
     Proposal,
 )
 from core.tracing import DebugTrace
+from runner.cli import main, parser
 from runner.scenario import ScenarioError, load_scenario
 from runner.terminal import parse_choice
 
@@ -126,6 +127,37 @@ def test_scenario_rejects_invalid_credential_reference(
 
     with pytest.raises(ScenarioError, match="credential_ref"):
         load_scenario(path)
+
+
+def test_runner_requires_credential_source() -> None:
+    with pytest.raises(SystemExit) as raised:
+        parser().parse_args(["--scenario", "scenario.yaml"])
+
+    assert raised.value.code == 2
+
+
+def test_runner_accepts_non_secret_credential_source() -> None:
+    options = parser().parse_args(
+        ["--scenario", "scenario.yaml", "--credential-source", "adc"]
+    )
+
+    assert options.credential_source == "adc"
+
+
+def test_runner_rejects_raw_credential_argument_without_echoing_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = main(
+        [
+            "--scenario",
+            "scenario.yaml",
+            "--credential-source",
+            TEST_SECRET,
+        ]
+    )
+
+    assert result == 2
+    assert TEST_SECRET not in capsys.readouterr().err
 
 
 def test_debug_trace_redacts_named_and_embedded_secrets(tmp_path: Path) -> None:

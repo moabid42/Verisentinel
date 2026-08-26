@@ -7,7 +7,7 @@ from core.config import Paths
 from core.errors import AuthorizationError, DataConsistencyError, NotFoundError
 from core.models import ApprovalRecord, ExecutionRequest, ExecutionResult
 from core.tracing import DebugTrace
-from execution.credentials import InMemoryCredentialVault
+from execution.credentials import CredentialResolver
 from execution.guardrails import verify_execution_authority
 from execution.models import EngagementAuthorization, ExecutionRecord
 from execution.registry import ActionRegistry
@@ -25,7 +25,7 @@ class ExecutionService:
         paths: Paths | None = None,
         enabled: bool | None = None,
         provider: str | None = None,
-        credentials: InMemoryCredentialVault | None = None,
+        credential_resolver: CredentialResolver | None = None,
         trace: DebugTrace | None = None,
     ) -> None:
         paths = paths or Paths()
@@ -33,7 +33,7 @@ class ExecutionService:
         self.snapshots = snapshots or SnapshotRepository(paths.artifacts / "snapshots")
         self.registry = ActionRegistry(self.snapshots)
         self.simulator = simulator or IAMSimulator()
-        self.credentials = credentials or InMemoryCredentialVault()
+        self.credential_resolver = credential_resolver or CredentialResolver()
         self.trace = trace
         self.provider = provider or os.getenv("EXECUTION_PROVIDER", "simulator")
         if self.provider != "simulator":
@@ -48,17 +48,6 @@ class ExecutionService:
             else os.getenv("EXECUTION_ENABLED", default_enabled).lower() == "true"
         )
         self._lock = RLock()
-
-    def register_access_token(self, identity: str, access_token: str) -> str:
-        reference = self.credentials.register_access_token(identity, access_token)
-        if self.trace is not None:
-            self.trace.emit(
-                "execution",
-                "credential_registered",
-                identity=identity,
-                credential_reference=reference,
-            )
-        return reference
 
     def authorize(
         self, authorization: EngagementAuthorization

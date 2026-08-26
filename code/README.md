@@ -247,23 +247,40 @@ They must exist in the current matrix. The prototype does not infer all effectiv
 a credential reference because GCP permissions are resource-specific.
 
 `credential_ref` is an opaque identifier, not a token or credential-source descriptor. It is the
-only credential-related value placed in the Environment Brain and persisted runtime records. The
-current simulator does not resolve or use credential material. Never put a raw credential in the
-scenario file.
+only credential-related value placed in the Environment Brain and persisted runtime records. Never
+put a raw credential in the scenario file.
+
+Supply the source independently when starting the runner. The source descriptor selects where the
+execution boundary will resolve a short-lived credential; it never contains the credential value:
+
+| Source | Behavior |
+| --- | --- |
+| `stdin` | Read one supplied short-lived token without terminal echo. |
+| `file:<path>` | Read one supplied short-lived token from a file inaccessible to group and other users. |
+| `env:<name>` | Read one supplied short-lived token from the named environment variable. |
+| `adc` | Resolve Application Default Credentials. Service-account key credentials are rejected. |
+| `impersonate:<principal>` | Use base ADC to mint a short-lived token for the exact service-account principal. |
+
+Supplied tokens are introspected for a verified principal and expiry. Resolution rejects missing,
+empty, unverifiable, expired, near-expiry, or principal-mismatched credentials. The simulator does
+not expose credential material to its deterministic action implementation.
 
 ## 3. Run the direct human-gated loop
 
 From `code/`:
 
 ```bash
-.venv/bin/python run.py --scenario=scenario.yaml
+.venv/bin/python run.py --scenario=scenario.yaml --credential-source=adc
 ```
 
 The runner reuses the current matrix and builds one automatically when none exists. To deliberately
 rebuild it first:
 
 ```bash
-.venv/bin/python run.py --scenario=scenario.yaml --rebuild-snapshot
+.venv/bin/python run.py \
+  --scenario=scenario.yaml \
+  --credential-source=adc \
+  --rebuild-snapshot
 ```
 
 Gemini ranks typed IAMouflage techniques. The Green Agent validates every proposal and prints up to

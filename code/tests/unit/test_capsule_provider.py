@@ -298,6 +298,21 @@ def test_cleanup_failure_overrides_success_and_removes_host_files(
     assert tuple(tmp_path.iterdir()) == ()
 
 
+def test_interruption_removes_temporary_inputs_before_propagating(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime(process_output())
+    runtime.run_error = KeyboardInterrupt()
+    capsule = provider(tmp_path, runtime)
+
+    with pytest.raises(KeyboardInterrupt):
+        capsule.execute(execution_spec(), lease())
+
+    assert runtime.spec_path is not None
+    assert not runtime.spec_path.exists()
+    assert tuple(tmp_path.iterdir()) == ()
+
+
 def test_configuration_rejects_unpinned_image_or_root_user() -> None:
     with pytest.raises(ValueError, match="digest lock"):
         CapsuleConfiguration(image="verisentinel-capsule:latest")

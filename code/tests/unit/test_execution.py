@@ -466,6 +466,66 @@ def test_unavailable_provider_never_falls_back_to_simulator(
         )
 
 
+def test_capsule_provider_is_selected_only_after_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from execution.capsule.doctor import CapsuleDoctor
+    from execution.capsule.provider import CapsuleConfiguration
+
+    image = (
+        "verisentinel-capsule@sha256:"
+        "d4670ddecec6eb9df14b990c03aa258dece2078f8114401c7f2086e4c4089ffe"
+    )
+    configuration = CapsuleConfiguration(
+        image=image,
+        network="private-mock-network",
+        user_id=1000,
+        group_id=1000,
+    )
+    monkeypatch.setattr(
+        CapsuleConfiguration,
+        "from_environment",
+        classmethod(lambda cls: configuration),
+    )
+    checked: list[bool] = []
+    monkeypatch.setattr(
+        CapsuleDoctor,
+        "require_ready",
+        lambda self: checked.append(True),
+    )
+
+    service = ExecutionService(
+        repository=ExecutionRepository(tmp_path / "execution"),
+        snapshots=SnapshotRepository(tmp_path / "snapshots"),
+        provider="capsule",
+    )
+
+    assert service.provider == "capsule"
+    assert checked == [True]
+    assert not service.enabled
+
+
+def test_unready_capsule_provider_fails_during_assembly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from execution.capsule.doctor import CapsuleDoctor
+
+    def unavailable(self) -> None:
+        del self
+        raise ValueError("execution provider 'capsule' is unavailable")
+
+    monkeypatch.setattr(CapsuleDoctor, "require_ready", unavailable)
+
+    with pytest.raises(ValueError, match="capsule.*unavailable"):
+        ExecutionService(
+            repository=ExecutionRepository(tmp_path / "execution"),
+            snapshots=SnapshotRepository(tmp_path / "snapshots"),
+            provider="capsule",
+        )
+
+
 def test_provider_selector_must_match_injected_provider(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="does not match"):
         ExecutionService(

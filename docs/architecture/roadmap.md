@@ -1,13 +1,13 @@
 # Agentic Copilot and Controlled Execution Roadmap
 
-- Status: Milestone 1 implemented; Milestones 2-5 planned
+- Status: Milestones 1-2 implemented; Milestones 3-5 planned
 - Last updated: 2026-08-26
 
 ## Purpose
 
 This roadmap sequences the accepted architecture into independently reversible
-milestones. Milestone 1 is implemented. The current supported workflow remains
-the deterministic simulator described in
+milestones. Milestones 1 and 2 are implemented. The current supported workflow
+remains the deterministic simulator described in
 [`code/README.md`](../../code/README.md); later milestones remain plans rather
 than implementation-status claims.
 
@@ -112,6 +112,12 @@ Acceptance gate:
   context.
 
 ## Milestone 2: One Typer CLI
+
+Implementation completed on 2026-08-26. One installed `verisentinel` Typer
+application now owns scenario validation, credential inspection, corpus build
+and status, sandbox diagnostics, and the direct human-gated run workflow. Thin
+command handlers call application services and translate errors to the defined
+process exit codes.
 
 Replace the `argparse` entrypoint with one Typer application. CLI handlers parse
 input, call application services, render bounded output, and translate known

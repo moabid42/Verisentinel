@@ -64,12 +64,12 @@ Verisentinel/
 │   ├── green_agent/       Engagement lifecycle + orchestration state machine
 │   ├── launchpad/         Human-review API and dashboard (publishes ≤ 3 candidate cards)
 │   ├── execution/         Approval, credential leasing, provider dispatch, and attempt records
-│   ├── runner/            Direct scenario loader + terminal launchpad — the main entrypoint
+│   ├── runner/            Typer CLI, application services, scenario loader, and terminal launchpad
 │   ├── evaluation-pipeline/  Offline proposer+validator harness with ground-truth scenario solutions
 │   ├── evaluation-tests/  Reproducible evidence harness (validator equivalence, corpus audit, plan review)
 │   ├── tests/             Planner unit tests
 │   ├── IAMouflage/        ← submodule (detection/technique knowledge builder + exports)
-│   ├── run.py             Entrypoint: `python run.py --scenario=... --credential-source=...`
+│   ├── run.py             Compatibility entrypoint for the unified Typer application
 │   └── README.md          Full, detailed usage and configuration reference
 └── data/
     └── iam-dataset/       ← submodule (GCP IAM permission catalog)
@@ -139,7 +139,7 @@ python3 -m venv .venv
 **2. Build a coverage-matrix snapshot** from every available detection source:
 
 ```bash
-.venv/bin/python -m ingestion
+.venv/bin/verisentinel corpus build
 ```
 
 **3. Configure Gemini and a scenario** by copying the tracked examples (the real files are gitignored):
@@ -152,7 +152,7 @@ cp scenario.example.yaml scenario.yaml     # then describe your authorized start
 **4. Run the human-gated loop:**
 
 ```bash
-.venv/bin/python run.py --scenario=scenario.yaml --credential-source=adc
+.venv/bin/verisentinel run --scenario=scenario.yaml --credential-source=adc
 ```
 
 Gemini ranks cataloged techniques, the validator filters them, and the terminal launchpad shows up

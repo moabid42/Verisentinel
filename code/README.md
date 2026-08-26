@@ -115,7 +115,7 @@ code/
 ├── green_agent/   Engagement lifecycle and orchestration
 ├── launchpad/     Human review API and HTML dashboard
 ├── execution/     Approval, typed actions, credential leases, providers, and attempts
-├── runner/        Direct scenario loader, terminal launchpad, and debug tracing
+├── runner/        Unified Typer CLI, application services, scenario loader, and terminal UI
 ├── tests/         Main planner unit tests
 ├── IAMouflage/    Git submodule that builds the detection/technique knowledge exports
 ├── artifacts/     Generated matrix snapshots; gitignored
@@ -153,6 +153,24 @@ python3 -m venv .venv
 
 The project uses editable installation so changes to local Python files take effect immediately.
 
+## Command overview
+
+Use the single installed command application for maintained workflows:
+
+```text
+verisentinel scenario validate PATH
+verisentinel auth inspect --credential-source SOURCE
+verisentinel corpus build
+verisentinel corpus status
+verisentinel sandbox doctor
+verisentinel run --scenario PATH --credential-source SOURCE
+```
+
+Run `.venv/bin/verisentinel --help` or nested `--help` commands for the
+complete option descriptions. See
+[`../docs/usage/milestone02.md`](../docs/usage/milestone02.md) for manual tests,
+exit codes, and security checks.
+
 ## 1. Build a matrix snapshot
 
 The planner needs a current immutable matrix before an engagement can be created.
@@ -160,21 +178,7 @@ The planner needs a current immutable matrix before an engagement can be created
 Build a snapshot from every available detection source:
 
 ```bash
-.venv/bin/python -m ingestion
-```
-
-Build a source-specific profile:
-
-```bash
-.venv/bin/python -m ingestion --source sigma
-```
-
-Select exact detections by repeating `--detection`:
-
-```bash
-.venv/bin/python -m ingestion \
-  --detection 'sigma:example-id' \
-  --detection 'panther:example-id'
+.venv/bin/verisentinel corpus build
 ```
 
 The command prints the matrix version and counts. It writes:
@@ -199,14 +203,16 @@ jq '{
 }' artifacts/snapshots/current.json
 ```
 
-The builder defaults to strict mode and refuses to publish data-consistency errors. Use
-`--non-strict` only while diagnosing a known source problem.
+The builder defaults to strict mode and refuses to publish data-consistency
+errors. A scenario-specific source or detection profile is built when
+`verisentinel run` receives `--rebuild-snapshot`.
 
 ## 2. Configure Gemini and the scenario
 
-The current workflow calls the Python modules directly; it does not start the HTTP APIs.
-`code/.env` and `code/scenario.yaml` are gitignored local configuration files. Tracked examples are
-available as `.env.example` and `scenario.example.yaml`.
+The current workflow uses one installed Typer application; it does not start the
+HTTP APIs. `code/.env` and `code/scenario.yaml` are gitignored local
+configuration files. Tracked examples are available as `.env.example` and
+`scenario.example.yaml`.
 
 Put the Gemini key in `.env`:
 
@@ -270,14 +276,14 @@ not expose credential material to its deterministic action implementation.
 From `code/`:
 
 ```bash
-.venv/bin/python run.py --scenario=scenario.yaml --credential-source=adc
+.venv/bin/verisentinel run --scenario=scenario.yaml --credential-source=adc
 ```
 
 The runner reuses the current matrix and builds one automatically when none exists. To deliberately
 rebuild it first:
 
 ```bash
-.venv/bin/python run.py \
+.venv/bin/verisentinel run \
   --scenario=scenario.yaml \
   --credential-source=adc \
   --rebuild-snapshot
@@ -340,8 +346,8 @@ maintained execution boundary. Run artifacts land under
 [`evaluation-pipeline/README.md`](evaluation-pipeline/README.md) for its
 lifecycle, assertions, and scenario fields.
 
-The HTTP applications remain in the repository for later service deployment, but `run.py` does not
-use them.
+The HTTP applications remain in the repository for later service deployment,
+but the `verisentinel` CLI does not use them.
 
 ## Candidate validation rule
 
@@ -498,7 +504,7 @@ pipeline.
 Run:
 
 ```bash
-.venv/bin/python -m ingestion
+.venv/bin/verisentinel corpus build
 ```
 
 ### `state contains permissions outside matrix`

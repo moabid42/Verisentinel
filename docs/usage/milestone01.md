@@ -185,7 +185,7 @@ Expected result: every value is rejected with a generic source error.
 Use only a synthetic value for this negative test:
 
 ```bash
-.venv/bin/python run.py \
+.venv/bin/verisentinel run \
   --scenario=scenario.example.yaml \
   --credential-source=synthetic-value-that-is-not-a-source
 ```
@@ -193,7 +193,7 @@ Use only a synthetic value for this negative test:
 Expected result:
 
 ```text
-Credential source error: unsupported or invalid descriptor
+Input error: Credential source is unsupported or invalid.
 ```
 
 The exit code is `2`, and the supplied synthetic value is not echoed. The
@@ -211,7 +211,7 @@ access_token: synthetic-token-must-be-rejected
 Then run:
 
 ```bash
-.venv/bin/python run.py \
+.venv/bin/verisentinel run \
   --scenario=/tmp/verisentinel-invalid-scenario.yaml \
   --credential-source=adc
 ```
@@ -289,7 +289,7 @@ the offline simulator.
 5. Start the planner:
 
 ```bash
-.venv/bin/python run.py \
+.venv/bin/verisentinel run \
   --scenario=scenario.yaml \
   --credential-source=adc
 ```
@@ -297,7 +297,7 @@ the offline simulator.
 For impersonation, use the exact scenario identity:
 
 ```bash
-.venv/bin/python run.py \
+.venv/bin/verisentinel run \
   --scenario=scenario.yaml \
   --credential-source=impersonate:runner@project.iam.gserviceaccount.com
 ```

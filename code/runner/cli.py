@@ -1,298 +1,236 @@
+"""Unified Typer command-line interface for Verisentinel."""
+
 from __future__ import annotations
 
-import argparse
-import os
-import sys
-import traceback
+from collections.abc import Callable
 from pathlib import Path
+from typing import Annotated
 
-from dotenv import load_dotenv
+import click
+import typer
 
-from core.errors import NotFoundError
-from execution.credentials import (
-    CredentialResolver,
-    CredentialSourceError,
-    parse_credential_source,
+from core.errors import AuthorizationError, PlannerError
+from execution.credentials import CredentialSourceError, parse_credential_source
+from runner.application import (
+    CorpusStatus,
+    PlannerConfigurationError,
+    PlannerRunRequest,
+    build_corpus,
+    inspect_authentication,
+    inspect_sandbox,
+    read_corpus_status,
+    run_planner,
+    validate_scenario,
 )
-from runner.scenario import PlannerScenario, ScenarioError, load_scenario
-from runner.terminal import parse_choice, render_candidates
+from runner.scenario import ScenarioError
 
-CODE_DIRECTORY = Path(__file__).resolve().parents[1]
+_OUTPUT_LIMIT = 512
+
+_APP_SETTINGS = {
+    "add_completion": False,
+    "context_settings": {"help_option_names": ["-h", "--help"]},
+    "no_args_is_help": True,
+    "pretty_exceptions_enable": False,
+    "rich_markup_mode": None,
+}
+
+app = typer.Typer(
+    name="verisentinel",
+    help="Validate coverage plans and run explicitly approved simulations.",
+    **_APP_SETTINGS,
+)
+scenario_app = typer.Typer(help="Validate planner scenario files.", **_APP_SETTINGS)
+auth_app = typer.Typer(help="Inspect credential source metadata.", **_APP_SETTINGS)
+corpus_app = typer.Typer(help="Build and inspect the coverage corpus.", **_APP_SETTINGS)
+sandbox_app = typer.Typer(help="Inspect controlled-execution readiness.", **_APP_SETTINGS)
+
+app.add_typer(scenario_app, name="scenario")
+app.add_typer(auth_app, name="auth")
+app.add_typer(corpus_app, name="corpus")
+app.add_typer(sandbox_app, name="sandbox")
 
 
-def parser() -> argparse.ArgumentParser:
-    command = argparse.ArgumentParser(
-        description="Run a human-gated planner over a scenario"
+@scenario_app.command("validate")
+def scenario_validate(
+    path: Annotated[Path, typer.Argument(help="Planner scenario YAML path.")],
+) -> None:
+    """Validate a scenario without starting a planner run."""
+    _invoke(
+        lambda: validate_scenario(path),
+        input_errors=(ScenarioError,),
     )
-    command.add_argument(
-        "--scenario",
-        type=Path,
-        required=True,
-        help="path to the planner scenario YAML",
+    typer.echo("Scenario is valid.")
+
+
+@auth_app.command("inspect")
+def auth_inspect(
+    credential_source: Annotated[
+        str,
+        typer.Option(
+            "--credential-source",
+            metavar="SOURCE",
+            help=(
+                "Credential source: stdin, file:<path>, env:<name>, adc, or "
+                "impersonate:<principal>."
+            ),
+        ),
+    ],
+) -> None:
+    """Resolve a source briefly and print only verified public metadata."""
+    source = _invoke(
+        lambda: parse_credential_source(credential_source),
+        input_errors=(CredentialSourceError,),
+        input_message="Credential source is unsupported or invalid.",
     )
-    command.add_argument(
-        "--credential-source",
-        required=True,
-        metavar="SOURCE",
-        help="credential source: stdin, file:<path>, env:<name>, adc, or impersonate:<principal>",
+    inspection = _invoke(
+        lambda: inspect_authentication(source),
+        input_errors=(AuthorizationError,),
     )
-    command.add_argument(
-        "--rebuild-snapshot",
-        action="store_true",
-        help="rebuild the IAM coverage snapshot before starting",
+    typer.echo(f"Source kind: {inspection.source_kind.value}")
+    typer.echo(f"Principal: {_bounded(inspection.principal)}")
+    typer.echo(f"Expires at: {inspection.expires_at.isoformat()}")
+
+
+@corpus_app.command("build")
+def corpus_build() -> None:
+    """Build the default coverage corpus."""
+    status = _invoke(build_corpus)
+    _render_corpus(status)
+
+
+@corpus_app.command("status")
+def corpus_status() -> None:
+    """Show the current coverage corpus without rebuilding it."""
+    status = _invoke(read_corpus_status)
+    _render_corpus(status)
+
+
+@sandbox_app.command("doctor")
+def sandbox_doctor() -> None:
+    """Report local execution capsule readiness."""
+    status = _invoke(inspect_sandbox)
+    typer.echo(f"Provider: {status.provider}")
+    typer.echo(f"Status: {'available' if status.available else 'unavailable'}")
+    typer.echo(f"Detail: {_bounded(status.detail)}")
+
+
+@app.command("run")
+def run_command(
+    scenario: Annotated[
+        Path,
+        typer.Option(
+            "--scenario",
+            metavar="PATH",
+            help="Planner scenario YAML path.",
+        ),
+    ],
+    credential_source: Annotated[
+        str,
+        typer.Option(
+            "--credential-source",
+            metavar="SOURCE",
+            help=(
+                "Credential source: stdin, file:<path>, env:<name>, adc, or "
+                "impersonate:<principal>."
+            ),
+        ),
+    ],
+    rebuild_snapshot: Annotated[
+        bool,
+        typer.Option(
+            "--rebuild-snapshot",
+            help="Rebuild the configured corpus before starting.",
+        ),
+    ] = False,
+    quiet_trace: Annotated[
+        bool,
+        typer.Option(
+            "--quiet-trace",
+            help="Do not echo trace event names to standard error.",
+        ),
+    ] = False,
+) -> None:
+    """Run the direct human-gated planner with the simulator default."""
+    source = _invoke(
+        lambda: parse_credential_source(credential_source),
+        input_errors=(CredentialSourceError,),
+        input_message="Credential source is unsupported or invalid.",
     )
-    command.add_argument(
-        "--quiet-trace",
-        action="store_true",
-        help="write JSONL diagnostics without echoing event names to stderr",
+    exit_code = _invoke(
+        lambda: run_planner(
+            PlannerRunRequest(
+                scenario_path=scenario,
+                credential_source=source,
+                rebuild_snapshot=rebuild_snapshot,
+                quiet_trace=quiet_trace,
+            )
+        ),
+        input_errors=(ScenarioError, PlannerConfigurationError),
     )
-    return command
+    if exit_code:
+        raise typer.Exit(exit_code)
 
 
 def main(arguments: list[str] | None = None) -> int:
-    options = parser().parse_args(arguments)
-    load_dotenv(CODE_DIRECTORY / ".env", override=False)
+    """Invoke the Typer application and return a process exit code."""
     try:
-        credential_source = parse_credential_source(options.credential_source)
-    except CredentialSourceError:
-        print("Credential source error: unsupported or invalid descriptor", file=sys.stderr)
-        return 2
-    try:
-        scenario = load_scenario(options.scenario.expanduser().resolve())
-    except ScenarioError as error:
-        print(f"Scenario error: {error}", file=sys.stderr)
-        return 2
-
-    from core.config import Paths
-    from core.ids import new_id
-    from core.models import CreateEngagementRequest
-    from core.tracing import DebugTrace
-    from execution.service import ExecutionService
-    from green_agent.orchestrator import GreenAgent
-    from ingestion.service import IngestorService
-    from ingestion.snapshot import SnapshotRepository
-    from launchpad.service import LaunchpadService
-    from proposer.gemini import GeminiProposer
-    from proposer.service import ProposerService
-
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        print("GEMINI_API_KEY is empty; add it to code/.env before running", file=sys.stderr)
-        return 2
-
-    paths = Paths()
-    run_id = new_id("run")
-    trace_path = paths.runtime / "traces" / f"{run_id}.jsonl"
-    progress_path = paths.runtime / "traces" / f"{run_id}.progress.log"
-    conversation_path = paths.runtime / "traces" / f"{run_id}.model-conversation.jsonl"
-    trace = DebugTrace(
-        trace_path,
-        run_id,
-        secrets=(api_key,),
-        echo=not options.quiet_trace,
-        progress_path=progress_path,
-    )
-    conversation_trace = DebugTrace(
-        conversation_path,
-        run_id,
-        secrets=(api_key,),
-        echo=False,
-    )
-    conversation_trace.emit(
-        "conversation",
-        "log_initialized",
-        scenario=scenario.name,
-        note="System, user, assistant, thought-summary, usage, and error records follow.",
-    )
-    trace.emit(
-        "runner",
-        "started",
-        scenario=scenario.name,
-        scenario_path=str(options.scenario),
-        target_scope=scenario.target_scope,
-        identity=scenario.starting_service_account.identity,
-        trace_path=str(trace_path),
-    )
-
-    try:
-        snapshots = SnapshotRepository(paths.artifacts / "snapshots")
-        matrix = _ensure_snapshot(
-            snapshots,
-            paths,
-            scenario=scenario,
-            rebuild=options.rebuild_snapshot,
-            trace=trace,
-            ingestor_type=IngestorService,
+        result = app(
+            args=arguments,
+            prog_name="verisentinel",
+            standalone_mode=False,
         )
-        gemini = GeminiProposer(
-            api_key=api_key,
-            model=scenario.model.name,
-            trace=trace,
-            conversation_trace=conversation_trace,
-            timeout_seconds=scenario.model.timeout_seconds,
-            maximum_attempts=scenario.model.maximum_attempts,
-            thinking_level=scenario.model.thinking_level,
-            api_mode=scenario.model.api_mode,
-            fallback_models=scenario.model.fallback_models,
-            heartbeat_seconds=scenario.model.heartbeat_seconds,
-        )
-        proposer = ProposerService(snapshots=snapshots, gemini=gemini, paths=paths)
-        launchpad = LaunchpadService(paths=paths)
-        credential_resolver = CredentialResolver()
-        credential_resolver.register(
-            scenario.starting_service_account.credential_ref,
-            credential_source,
-        )
-        execution = ExecutionService(
-            snapshots=snapshots,
-            paths=paths,
-            credential_resolver=credential_resolver,
-            trace=trace,
-        )
-        planner = GreenAgent(
-            snapshots=snapshots,
-            proposer=proposer,
-            launchpad=launchpad,
-            execution=execution,
-            paths=paths,
-            trace=trace,
-        )
-        engagement = planner.create(
-            CreateEngagementRequest(
-                objective=scenario.objective,
-                identity=scenario.starting_service_account.identity,
-                credential=scenario.starting_service_account.credential_ref,
-                target_scope=scenario.target_scope,
-                permissions=scenario.starting_service_account.permissions,
-                state_source=f"scenario:{scenario.name}",
-            )
-        )
-        trace.emit(
-            "runner",
-            "engagement_created",
-            engagement_id=engagement.engagement_id,
-            matrix_version=matrix.matrix_version,
-            state_version=engagement.state_version,
-            execution_provider=execution.provider,
-        )
-        print(f"\nEngagement: {engagement.engagement_id}")
-        print(f"Execution provider: {execution.provider}")
-        print(f"Debug trace: {trace_path}")
-        print(f"Model conversation: {conversation_path}")
-        result = planner.cycle(engagement.engagement_id)
-        return _operator_loop(planner, launchpad, scenario, result, trace)
+    except click.exceptions.Exit as error:
+        return error.exit_code
+    except click.ClickException as error:
+        error.show()
+        return error.exit_code
     except KeyboardInterrupt:
-        trace.emit("runner", "interrupted", level="warning")
-        print("\nInterrupted. No implicit approval or execution was performed.", file=sys.stderr)
+        typer.echo(
+            "Interrupted. No implicit approval or execution was performed.",
+            err=True,
+        )
         return 130
+    return result if isinstance(result, int) else 0
+
+
+def _invoke[Result](
+    operation: Callable[[], Result],
+    *,
+    input_errors: tuple[type[Exception], ...] = (),
+    input_message: str | None = None,
+) -> Result:
+    try:
+        return operation()
+    except KeyboardInterrupt:
+        typer.echo(
+            "Interrupted. No implicit approval or execution was performed.",
+            err=True,
+        )
+        raise typer.Exit(130) from None
+    except input_errors as error:
+        message = input_message or str(error)
+        typer.echo(f"Input error: {_bounded(message)}", err=True)
+        raise typer.Exit(2) from None
+    except (PlannerError, OSError, RuntimeError) as error:
+        typer.echo(f"Application failure: {_bounded(str(error))}", err=True)
+        raise typer.Exit(1) from None
     except Exception as error:
-        trace.emit(
-            "runner",
-            "failed",
-            level="error",
-            error_type=type(error).__name__,
-            error=str(error),
-            traceback=traceback.format_exc(),
-        )
-        print(f"\nPlanner failed: {error}\nDebug trace: {trace_path}", file=sys.stderr)
-        return 1
+        typer.echo(f"Application failure: {type(error).__name__}", err=True)
+        raise typer.Exit(1) from None
 
 
-def _ensure_snapshot(
-    snapshots, paths, *, scenario: PlannerScenario, rebuild: bool, trace, ingestor_type
-):
-    from ingestion.models import BuildSnapshotRequest
-
-    request = BuildSnapshotRequest(
-        enabled_detection_ids=scenario.detections.detection_ids,
-        enabled_sources=scenario.detections.sources,
-        strict=scenario.detections.strict,
-    )
-    if not rebuild:
-        try:
-            matrix = snapshots.current()
-        except NotFoundError:
-            pass
-        else:
-            configured_sources = set(scenario.detections.sources)
-            configured_ids = set(scenario.detections.detection_ids)
-            matrix_sources = {row.source for row in matrix.detections.values()}
-            if configured_sources and matrix_sources != configured_sources:
-                trace.emit(
-                    "runner",
-                    "snapshot_profile_mismatch",
-                    configured_sources=sorted(configured_sources),
-                    matrix_sources=sorted(matrix_sources),
-                )
-            elif configured_ids and set(matrix.enabled_detection_ids) != configured_ids:
-                trace.emit(
-                    "runner",
-                    "snapshot_profile_mismatch",
-                    configured_detection_count=len(configured_ids),
-                    matrix_detection_count=len(matrix.enabled_detection_ids),
-                )
-            else:
-                trace.emit(
-                    "runner",
-                    "snapshot_loaded",
-                    matrix_version=matrix.matrix_version,
-                    technique_count=len(matrix.techniques),
-                    permission_count=len(matrix.permissions),
-                    detection_count=len(matrix.detections),
-                    detection_sources=sorted(matrix_sources),
-                )
-                return matrix
-    trace.emit("runner", "snapshot_build_started")
-    matrix = ingestor_type(paths=paths, repository=snapshots).build(request)
-    trace.emit(
-        "runner",
-        "snapshot_build_completed",
-        matrix_version=matrix.matrix_version,
-        technique_count=len(matrix.techniques),
-        permission_count=len(matrix.permissions),
-    )
-    return matrix
+def _render_corpus(status: CorpusStatus) -> None:
+    if not status.available:
+        typer.echo("Status: not built")
+        return
+    typer.echo("Status: available")
+    typer.echo(f"Matrix version: {_bounded(status.matrix_version or '')}")
+    typer.echo(f"Permissions: {status.permission_count}")
+    typer.echo(f"Detections: {status.detection_count}")
+    typer.echo(f"Techniques: {status.technique_count}")
 
 
-def _operator_loop(planner, launchpad, scenario: PlannerScenario, result, trace) -> int:
-    from core.models import EngagementStatus, OperatorDecision
-
-    while result.status == EngagementStatus.AWAITING_APPROVAL:
-        print(render_candidates(result.candidates))
-        print("\nChoose: 1-3 approve | r1-r3 reject | a alternatives | x reject all | q terminate")
-        while True:
-            try:
-                choice = parse_choice(input("> "), result.candidates)
-                break
-            except ValueError as error:
-                print(f"Invalid choice: {error}")
-
-        current = planner.get(result.engagement_id)
-        decision = OperatorDecision(
-            engagement_id=current.engagement_id,
-            decision=choice.decision,
-            candidate_id=choice.candidate_id,
-            state_version=current.state_version,
-            matrix_version=current.matrix_version,
-            operator=scenario.operator,
-            reason=choice.reason,
-        )
-        trace.emit(
-            "operator",
-            "decision_submitted",
-            decision=choice.decision,
-            candidate_id=choice.candidate_id,
-            operator=scenario.operator,
-        )
-        launchpad.decide(decision)
-        result = planner.decide(decision)
-        print(f"\n{result.message}")
-
-    trace.emit(
-        "runner",
-        "finished",
-        engagement_id=result.engagement_id,
-        status=result.status,
-        message=result.message,
-    )
-    return 0 if result.status != EngagementStatus.FAILED else 1
+def _bounded(value: str) -> str:
+    if len(value) <= _OUTPUT_LIMIT:
+        return value
+    return value[: _OUTPUT_LIMIT - 3] + "..."

@@ -1,8 +1,11 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+import runner.cli as cli_module
 from core.models import (
     CandidateCard,
     CandidateValidationResult,
@@ -10,11 +13,14 @@ from core.models import (
     Proposal,
 )
 from core.tracing import DebugTrace
-from runner.cli import main, parser
+from execution.credentials import CredentialInspection, CredentialSourceKind
+from runner.application import CorpusStatus, PlannerRunRequest
+from runner.cli import app, main
 from runner.scenario import ScenarioError, load_scenario
 from runner.terminal import parse_choice
 
 TEST_SECRET = "synthetic-sensitive-value-for-redaction"
+CLI = CliRunner()
 
 
 def write_scenario(path: Path, credential_ref: str = "run/default") -> None:
@@ -129,19 +135,177 @@ def test_scenario_rejects_invalid_credential_reference(
         load_scenario(path)
 
 
-def test_runner_requires_credential_source() -> None:
-    with pytest.raises(SystemExit) as raised:
-        parser().parse_args(["--scenario", "scenario.yaml"])
+def test_top_level_and_nested_help_are_stable() -> None:
+    top_level = CLI.invoke(app, ["--help"])
+    scenario = CLI.invoke(app, ["scenario", "--help"])
 
-    assert raised.value.code == 2
+    assert top_level.exit_code == 0
+    assert "scenario" in top_level.stdout
+    assert "auth" in top_level.stdout
+    assert "corpus" in top_level.stdout
+    assert "sandbox" in top_level.stdout
+    assert "run" in top_level.stdout
+    assert ".env" not in top_level.stdout
+    assert scenario.exit_code == 0
+    assert "validate" in scenario.stdout
 
 
-def test_runner_accepts_non_secret_credential_source() -> None:
-    options = parser().parse_args(
-        ["--scenario", "scenario.yaml", "--credential-source", "adc"]
+def test_scenario_validate_route_succeeds(tmp_path: Path) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+
+    result = CLI.invoke(app, ["scenario", "validate", str(path)])
+
+    assert result.exit_code == 0
+    assert result.stdout == "Scenario is valid.\n"
+
+
+def test_scenario_validate_rejects_missing_path() -> None:
+    result = CLI.invoke(app, ["scenario", "validate", "missing.yaml"])
+
+    assert result.exit_code == 2
+    assert "Input error" in result.output
+
+
+def test_required_command_input_returns_two() -> None:
+    auth = CLI.invoke(app, ["auth", "inspect"])
+    scenario = CLI.invoke(app, ["scenario", "validate"])
+    run = CLI.invoke(app, ["run", "--scenario", "scenario.yaml"])
+
+    assert auth.exit_code == 2
+    assert scenario.exit_code == 2
+    assert run.exit_code == 2
+
+
+def test_auth_inspect_prints_only_public_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expires_at = datetime.now(UTC) + timedelta(minutes=10)
+    monkeypatch.setattr(
+        cli_module,
+        "inspect_authentication",
+        lambda source: CredentialInspection(
+            source_kind=source.kind,
+            principal="runner@example.test",
+            expires_at=expires_at,
+        ),
     )
 
-    assert options.credential_source == "adc"
+    result = CLI.invoke(
+        app,
+        ["auth", "inspect", "--credential-source", "env:TEST_TOKEN"],
+    )
+
+    assert result.exit_code == 0
+    assert "Source kind: env" in result.stdout
+    assert "Principal: runner@example.test" in result.stdout
+    assert f"Expires at: {expires_at.isoformat()}" in result.stdout
+    assert "TEST_TOKEN" not in result.stdout
+
+
+def test_corpus_routes_render_service_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    available = CorpusStatus(
+        available=True,
+        matrix_version="sha256:matrix",
+        permission_count=2,
+        detection_count=3,
+        technique_count=4,
+    )
+    monkeypatch.setattr(cli_module, "build_corpus", lambda: available)
+    monkeypatch.setattr(
+        cli_module,
+        "read_corpus_status",
+        lambda: CorpusStatus(available=False),
+    )
+
+    built = CLI.invoke(app, ["corpus", "build"])
+    current = CLI.invoke(app, ["corpus", "status"])
+
+    assert built.exit_code == 0
+    assert "Matrix version: sha256:matrix" in built.stdout
+    assert "Techniques: 4" in built.stdout
+    assert current.exit_code == 0
+    assert current.stdout == "Status: not built\n"
+
+
+def test_sandbox_doctor_reports_planned_provider_unavailable() -> None:
+    result = CLI.invoke(app, ["sandbox", "doctor"])
+
+    assert result.exit_code == 0
+    assert "Provider: capsule" in result.stdout
+    assert "Status: unavailable" in result.stdout
+
+
+def test_run_routes_validated_input_to_application_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[PlannerRunRequest] = []
+
+    def run(request: PlannerRunRequest) -> int:
+        requests.append(request)
+        return 0
+
+    monkeypatch.setattr(cli_module, "run_planner", run)
+
+    result = CLI.invoke(
+        app,
+        [
+            "run",
+            "--scenario",
+            "scenario.yaml",
+            "--credential-source",
+            "adc",
+            "--rebuild-snapshot",
+            "--quiet-trace",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert len(requests) == 1
+    assert requests[0].scenario_path == Path("scenario.yaml")
+    assert requests[0].credential_source.kind == CredentialSourceKind.ADC
+    assert requests[0].rebuild_snapshot
+    assert requests[0].quiet_trace
+
+
+def test_known_application_failure_returns_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail() -> CorpusStatus:
+        raise RuntimeError("synthetic corpus failure")
+
+    monkeypatch.setattr(cli_module, "build_corpus", fail)
+
+    result = CLI.invoke(app, ["corpus", "build"])
+
+    assert result.exit_code == 1
+    assert "Application failure: synthetic corpus failure" in result.output
+
+
+def test_interruption_returns_130_without_implicit_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(request: PlannerRunRequest) -> int:
+        del request
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "run_planner", interrupt)
+
+    result = CLI.invoke(
+        app,
+        [
+            "run",
+            "--scenario",
+            "scenario.yaml",
+            "--credential-source",
+            "adc",
+        ],
+    )
+
+    assert result.exit_code == 130
+    assert "No implicit approval or execution" in result.output
 
 
 def test_runner_rejects_raw_credential_argument_without_echoing_it(
@@ -149,6 +313,7 @@ def test_runner_rejects_raw_credential_argument_without_echoing_it(
 ) -> None:
     result = main(
         [
+            "run",
             "--scenario",
             "scenario.yaml",
             "--credential-source",

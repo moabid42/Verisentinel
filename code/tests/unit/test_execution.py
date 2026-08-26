@@ -22,7 +22,11 @@ from execution.credentials import (
     TokenMetadata,
     parse_credential_source,
 )
-from execution.models import EngagementAuthorization, ExecutionAttemptStatus
+from execution.models import (
+    EngagementAuthorization,
+    ExecutionAttemptStatus,
+    ExecutionRecord,
+)
 from execution.repository import ExecutionRepository
 from execution.service import ExecutionService
 from execution.simulator import SimulatorExecutionProvider
@@ -449,12 +453,16 @@ def test_provider_cannot_return_credential_material(tmp_path: Path) -> None:
     assert ACCESS_TOKEN not in persisted
 
 
-def test_unknown_provider_never_falls_back_to_simulator(tmp_path: Path) -> None:
+@pytest.mark.parametrize("provider_name", ["unregistered", "evaluation", "gcp"])
+def test_unavailable_provider_never_falls_back_to_simulator(
+    tmp_path: Path,
+    provider_name: str,
+) -> None:
     with pytest.raises(ValueError, match="not registered"):
         ExecutionService(
             repository=ExecutionRepository(tmp_path / "execution"),
             snapshots=SnapshotRepository(tmp_path / "snapshots"),
-            provider="unregistered",
+            provider=provider_name,
         )
 
 
@@ -465,6 +473,25 @@ def test_provider_selector_must_match_injected_provider(tmp_path: Path) -> None:
             snapshots=SnapshotRepository(tmp_path / "snapshots"),
             provider="simulator",
             provider_impl=RecordingProvider(),
+        )
+
+
+def test_injected_provider_name_must_be_registered(tmp_path: Path) -> None:
+    class UnregisteredProvider:
+        name = "unregistered"
+
+        def execute(
+            self,
+            spec: ExecutionSpec,
+            credential_lease: CredentialLease,
+        ) -> ExecutionObservation:
+            raise AssertionError("unregistered provider must not execute")
+
+    with pytest.raises(ValueError, match="not registered"):
+        ExecutionService(
+            repository=ExecutionRepository(tmp_path / "execution"),
+            snapshots=SnapshotRepository(tmp_path / "snapshots"),
+            provider_impl=UnregisteredProvider(),
         )
 
 
@@ -505,3 +532,16 @@ def test_empty_legacy_argument_records_still_validate(tmp_path: Path) -> None:
     assert legacy_request.credential_ref == ""
     assert legacy_request.arguments.model_dump(mode="json") == {}
     assert legacy_approval.credential_ref == ""
+
+
+def test_legacy_execution_record_without_spec_still_validates(tmp_path: Path) -> None:
+    service, request = execution_fixture(tmp_path)
+    service.execute(request)
+    record = service.repository.by_approval(request.approval_id)
+    payload = record.model_dump(mode="json")
+    payload.pop("spec")
+
+    legacy_record = ExecutionRecord.model_validate(payload)
+
+    assert legacy_record.spec is None
+    assert legacy_record.result == record.result

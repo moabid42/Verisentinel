@@ -39,10 +39,11 @@ class CapsuleExecutionError(RuntimeError):
 class CapsuleRuntime(Protocol):
     """Docker operations required by the capsule provider."""
 
-    def run(
+    def run_container(
         self,
         arguments: tuple[str, ...],
         *,
+        container_name: str,
         timeout_seconds: float,
         output_limit_bytes: int,
     ) -> ProcessOutput: ...
@@ -103,7 +104,9 @@ class CapsuleConfiguration:
 class CapsuleMetrics:
     """Non-sensitive timing from the most recent provider invocation."""
 
-    container_duration_seconds: float
+    startup_latency_seconds: float | None
+    total_duration_seconds: float
+    peak_memory_bytes: int | None
     cleanup_duration_seconds: float
 
 
@@ -140,8 +143,9 @@ class CapsuleExecutionProvider:
         try:
             arguments = self._docker_arguments(container_name, prepared)
             try:
-                result = self.runtime.run(
+                result = self.runtime.run_container(
                     arguments,
+                    container_name=container_name,
                     timeout_seconds=spec.timeout_seconds,
                     output_limit_bytes=(
                         spec.output_limit_bytes
@@ -170,8 +174,12 @@ class CapsuleExecutionProvider:
             cleanup_error = self._cleanup(container_name, prepared)
             cleanup_duration = time.monotonic() - cleanup_started
         self.last_metrics = CapsuleMetrics(
-            container_duration_seconds=(
-                result.duration_seconds if result is not None else 0.0
+            startup_latency_seconds=(
+                result.startup_latency_seconds if result is not None else None
+            ),
+            total_duration_seconds=(result.duration_seconds if result is not None else 0.0),
+            peak_memory_bytes=(
+                result.peak_memory_bytes if result is not None else None
             ),
             cleanup_duration_seconds=cleanup_duration,
         )

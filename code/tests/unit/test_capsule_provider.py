@@ -47,16 +47,18 @@ class RecordingRuntime:
         self.credential_path: Path | None = None
         self.cleanup_timeout = 0.0
 
-    def run(
+    def run_container(
         self,
         arguments: tuple[str, ...],
         *,
+        container_name: str,
         timeout_seconds: float,
         output_limit_bytes: int,
     ) -> ProcessOutput:
         del timeout_seconds, output_limit_bytes
         self.arguments = arguments
         self.container_name = arguments[arguments.index("--name") + 1]
+        assert container_name == self.container_name
         mounts = [
             arguments[index + 1]
             for index, value in enumerate(arguments)
@@ -144,6 +146,8 @@ def process_output(
         stdout=stdout or observation().model_dump_json().encode("utf-8"),
         stderr=stderr,
         duration_seconds=0.25,
+        startup_latency_seconds=0.05,
+        peak_memory_bytes=12_345_678,
     )
 
 
@@ -194,7 +198,9 @@ def test_provider_applies_all_isolation_and_resource_bounds(tmp_path: Path) -> N
     assert str(Path(__file__).parents[3]) not in rendered
     assert runtime.cleanup_timeout == 10.0
     assert capsule.last_metrics is not None
-    assert capsule.last_metrics.container_duration_seconds == 0.25
+    assert capsule.last_metrics.startup_latency_seconds == 0.05
+    assert capsule.last_metrics.total_duration_seconds == 0.25
+    assert capsule.last_metrics.peak_memory_bytes == 12_345_678
 
 
 def test_provider_removes_temporary_inputs_after_success(tmp_path: Path) -> None:

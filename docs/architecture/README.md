@@ -19,8 +19,8 @@ commands, or copilot adapters are implemented.
    optional DeepSeek adapter.
 2. Read ADR-0002 for typed execution, credential sources, provider dispatch, and
    local capsule isolation.
-3. Use the staged roadmap, once added, to sequence implementation and acceptance
-   gates.
+3. Use the [staged implementation roadmap](roadmap.md) to sequence changes and
+   acceptance gates.
 
 ## Repository Guidance
 

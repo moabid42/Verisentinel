@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from execution.capsule.provider import (
     CapsuleConfiguration,
     CapsuleExecutionProvider,
 )
-from execution.capsule.runtime import DockerRuntime
+from execution.capsule.runtime import DockerRuntime, ProcessOutput
 from execution.credentials import (
     CredentialResolver,
     TokenMetadata,
@@ -65,12 +66,12 @@ class RecordingDockerRuntime(DockerRuntime):
 
     def run_container(
         self,
-        arguments,
+        arguments: Sequence[str],
         *,
-        container_name,
-        timeout_seconds,
-        output_limit_bytes,
-    ):
+        container_name: str,
+        timeout_seconds: float,
+        output_limit_bytes: int,
+    ) -> ProcessOutput:
         self.capsule_name = container_name
         return super().run_container(
             arguments,
@@ -81,33 +82,38 @@ class RecordingDockerRuntime(DockerRuntime):
 
 
 def _docker_available() -> bool:
-    if shutil.which("docker") is None:
+    if shutil.which("docker") is None or os.getuid() == 0:
         return False
-    for image in (BASE_IMAGE,):
-        result = subprocess.run(
-            ("docker", "image", "inspect", image),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+    try:
+        for image in (BASE_IMAGE,):
+            result = subprocess.run(
+                ("docker", "image", "inspect", image),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+        return (
+            subprocess.run(
+                ("docker", "info"),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            ).returncode
+            == 0
         )
-        if result.returncode != 0:
-            return False
-    return (
-        subprocess.run(
-            ("docker", "info"),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode
-        == 0
-    )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 pytestmark = pytest.mark.skipif(
     not _docker_available(),
-    reason="Docker daemon and pinned base image are required",
+    reason="non-root Docker access and the pinned base image are required",
 )
 
 

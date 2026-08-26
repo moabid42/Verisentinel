@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 
 from core.errors import DataConsistencyError, NotFoundError
-from core.models import ApprovalRecord
+from core.ids import new_id
+from core.models import ApprovalRecord, utc_now
 from core.persistence import JsonModelStore
-from execution.models import EngagementAuthorization, ExecutionRecord
+from execution.models import (
+    EngagementAuthorization,
+    ExecutionAttempt,
+    ExecutionAttemptStatus,
+    ExecutionRecord,
+)
+from execution.provider import ExecutionProviderName
 
 
 class ExecutionRepository:
@@ -19,6 +27,11 @@ class ExecutionRepository:
         self.executions_by_approval = JsonModelStore(
             directory / "executions-by-approval", ExecutionRecord
         )
+        self.attempts = JsonModelStore(directory / "attempts", ExecutionAttempt)
+        self.attempts_by_approval = JsonModelStore(
+            directory / "attempts-by-approval", ExecutionAttempt
+        )
+        self._lock = RLock()
 
     def authorize(self, authorization: EngagementAuthorization) -> EngagementAuthorization:
         self.authorizations.put(authorization.engagement_id, authorization)
@@ -41,6 +54,73 @@ class ExecutionRepository:
 
     def approval(self, approval_id: str) -> ApprovalRecord:
         return self.approvals.get(approval_id)
+
+    def reserve_attempt(
+        self,
+        approval: ApprovalRecord,
+        provider: ExecutionProviderName,
+    ) -> ExecutionAttempt:
+        """Atomically consume an approval before credential resolution."""
+        attempt = ExecutionAttempt(
+            attempt_id=new_id("attempt"),
+            approval_id=approval.approval_id,
+            engagement_id=approval.engagement_id,
+            provider=provider,
+        )
+        reservation = (
+            self.attempts_by_approval.directory / f"{approval.approval_id}.json"
+        )
+        reservation.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self._lock, reservation.open("x", encoding="utf-8") as stream:
+                stream.write(attempt.model_dump_json(indent=2))
+        except FileExistsError as error:
+            raise DataConsistencyError(
+                f"approval {approval.approval_id!r} has already been consumed"
+            ) from error
+        self.attempts.put(attempt.attempt_id, attempt)
+        return attempt
+
+    def complete_attempt(
+        self,
+        attempt: ExecutionAttempt,
+        *,
+        execution_id: str,
+    ) -> ExecutionAttempt:
+        """Finalize a reserved attempt after a result is persisted."""
+        completed = attempt.model_copy(
+            update={
+                "status": ExecutionAttemptStatus.SUCCEEDED,
+                "completed_at": utc_now(),
+                "execution_id": execution_id,
+            }
+        )
+        self._store_attempt(completed)
+        return completed
+
+    def fail_attempt(
+        self,
+        attempt: ExecutionAttempt,
+        *,
+        failure_code: str,
+    ) -> ExecutionAttempt:
+        """Finalize a reserved attempt without persisting provider details."""
+        failed = attempt.model_copy(
+            update={
+                "status": ExecutionAttemptStatus.FAILED,
+                "completed_at": utc_now(),
+                "failure_code": failure_code,
+            }
+        )
+        self._store_attempt(failed)
+        return failed
+
+    def attempt_by_approval(self, approval_id: str) -> ExecutionAttempt:
+        return self.attempts_by_approval.get(approval_id)
+
+    def _store_attempt(self, attempt: ExecutionAttempt) -> None:
+        self.attempts.put(attempt.attempt_id, attempt)
+        self.attempts_by_approval.put(attempt.approval_id, attempt)
 
     def record(self, record: ExecutionRecord) -> ExecutionRecord:
         try:

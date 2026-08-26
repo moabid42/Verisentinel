@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,9 +12,11 @@ from core.models import (
     OperatorDecision,
     Proposal,
     ProposalBatch,
+    ProposalRequest,
 )
 from environment.brain import EnvironmentBrain
 from environment.repository import EnvironmentRepository
+from execution.credentials import CredentialResolver, TokenMetadata, parse_credential_source
 from execution.repository import ExecutionRepository
 from execution.service import ExecutionService
 from green_agent.orchestrator import GreenAgent
@@ -24,12 +27,16 @@ from launchpad.repository import LaunchpadRepository
 from launchpad.service import LaunchpadService
 from validator.service import ValidatorService
 
+GREEN_ACCESS_TOKEN = "synthetic-green-agent-token"
+
 
 class StaticProposer:
     def __init__(self, proposals: tuple[Proposal, ...]) -> None:
         self.proposals = proposals
+        self.requests: list[ProposalRequest] = []
 
-    def propose(self, request) -> ProposalBatch:
+    def propose(self, request: ProposalRequest) -> ProposalBatch:
+        self.requests.append(request)
         allowed = set(request.relevant_technique_ids)
         return ProposalBatch(
             proposals=tuple(
@@ -39,6 +46,17 @@ class StaticProposer:
             ),
             provider="fixture",
             model="fixture",
+        )
+
+
+class StaticTokenInspector:
+    """Return an offline credential identity for orchestration tests."""
+
+    def inspect(self, access_token: str) -> TokenMetadata:
+        del access_token
+        return TokenMetadata(
+            principal="operator@example.test",
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
         )
 
 
@@ -72,9 +90,18 @@ def services(tmp_path: Path, proposal_factory=None):
     launchpad = LaunchpadService(
         repository=LaunchpadRepository(tmp_path / "launchpad")
     )
+    credential_resolver = CredentialResolver(
+        environ={"EXECUTION_TOKEN": GREEN_ACCESS_TOKEN},
+        token_inspector=StaticTokenInspector(),
+    )
+    credential_resolver.register(
+        "credential-a",
+        parse_credential_source("env:EXECUTION_TOKEN"),
+    )
     execution = ExecutionService(
         repository=ExecutionRepository(tmp_path / "execution"),
         snapshots=snapshots,
+        credential_resolver=credential_resolver,
         enabled=True,
     )
     green = GreenAgent(
@@ -121,6 +148,18 @@ def test_green_agent_publishes_only_admissible_candidates(tmp_path: Path) -> Non
     ]
     assert launchpad.candidates(engagement.engagement_id).candidates == result.candidates
     assert execution.repository.executions.list_keys() == ()
+
+
+def test_proposal_model_input_excludes_credential_values(tmp_path: Path) -> None:
+    green, _, _, engagement, _ = services(tmp_path)
+
+    green.cycle(engagement.engagement_id)
+
+    proposer = green.proposer
+    assert isinstance(proposer, StaticProposer)
+    captured = proposer.requests[0].model_dump_json()
+    assert GREEN_ACCESS_TOKEN not in captured
+    assert '"credential-a"' not in captured
 
 
 def test_explicit_approval_executes_and_versions_the_environment(tmp_path: Path) -> None:

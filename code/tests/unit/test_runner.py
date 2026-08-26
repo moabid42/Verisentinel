@@ -177,6 +177,15 @@ def test_required_command_input_returns_two() -> None:
     assert run.exit_code == 2
 
 
+def test_installed_entrypoint_translates_usage_error_to_two(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = main(["run", "--scenario", "scenario.yaml"])
+
+    assert result == 2
+    assert "Missing option" in capsys.readouterr().err
+
+
 def test_auth_inspect_prints_only_public_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

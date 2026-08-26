@@ -6,7 +6,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
-import click
 import typer
 
 from core.errors import AuthorizationError, PlannerError
@@ -174,23 +173,19 @@ def run_command(
 def main(arguments: list[str] | None = None) -> int:
     """Invoke the Typer application and return a process exit code."""
     try:
-        result = app(
+        app(
             args=arguments,
             prog_name="verisentinel",
-            standalone_mode=False,
         )
-    except click.exceptions.Exit as error:
-        return error.exit_code
-    except click.ClickException as error:
-        error.show()
-        return error.exit_code
+    except SystemExit as error:
+        return error.code if isinstance(error.code, int) else 1
     except KeyboardInterrupt:
         typer.echo(
             "Interrupted. No implicit approval or execution was performed.",
             err=True,
         )
         return 130
-    return result if isinstance(result, int) else 0
+    return 0
 
 
 def _invoke[Result](

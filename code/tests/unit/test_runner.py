@@ -135,9 +135,25 @@ def test_scenario_rejects_invalid_credential_reference(
         load_scenario(path)
 
 
-def test_top_level_and_nested_help_are_stable() -> None:
-    top_level = CLI.invoke(app, ["--help"])
-    scenario = CLI.invoke(app, ["scenario", "--help"])
+def test_top_level_and_nested_help_are_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", TEST_SECRET)
+    routes = (
+        ("--help",),
+        ("scenario", "--help"),
+        ("scenario", "validate", "--help"),
+        ("auth", "--help"),
+        ("auth", "inspect", "--help"),
+        ("corpus", "--help"),
+        ("corpus", "build", "--help"),
+        ("corpus", "status", "--help"),
+        ("sandbox", "--help"),
+        ("sandbox", "doctor", "--help"),
+        ("run", "--help"),
+    )
+    results = tuple(CLI.invoke(app, list(route)) for route in routes)
+    top_level = results[0]
 
     assert top_level.exit_code == 0
     assert "scenario" in top_level.stdout
@@ -146,8 +162,9 @@ def test_top_level_and_nested_help_are_stable() -> None:
     assert "sandbox" in top_level.stdout
     assert "run" in top_level.stdout
     assert ".env" not in top_level.stdout
-    assert scenario.exit_code == 0
-    assert "validate" in scenario.stdout
+    assert "validate" in results[1].stdout
+    assert all(result.exit_code == 0 for result in results)
+    assert all(TEST_SECRET not in result.output for result in results)
 
 
 def test_scenario_validate_route_succeeds(tmp_path: Path) -> None:

@@ -174,6 +174,23 @@ def test_file_source_rejects_broad_permissions(tmp_path: Path) -> None:
     assert str(credential_path) not in str(raised.value)
 
 
+def test_missing_credential_file_fails_without_exposing_path(tmp_path: Path) -> None:
+    credential_path = tmp_path / "missing-credential"
+    resolver = CredentialResolver(
+        token_inspector=StaticTokenInspector(),
+        now=lambda: NOW,
+    )
+    resolver.register(
+        "run/default",
+        parse_credential_source(f"file:{credential_path}"),
+    )
+
+    with pytest.raises(AuthorizationError, match="could not be read") as raised:
+        resolver.resolve("run/default", PRINCIPAL)
+
+    assert str(credential_path) not in str(raised.value)
+
+
 def test_missing_and_empty_sources_fail_without_inspection() -> None:
     inspector = StaticTokenInspector()
     resolver = CredentialResolver(

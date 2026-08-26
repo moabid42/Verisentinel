@@ -529,8 +529,9 @@ latest `runtime/traces/*.jsonl` file for request start, timeout, retry, response
 - Ingestion, environment, validator, and proposer APIs are not authenticated.
 - `code/.env` and `code/scenario.yaml` are ignored; never force-add them to Git.
 - The direct runner passes only a source descriptor and opaque reference to the
-  execution boundary. Credential material exists only in a short-lived lease
-  around one provider call and is cleared on every exit path.
+  execution boundary. The boundary resolves credential material immediately
+  before one provider call, and the short-lived lease clears its material on
+  every exit path.
 - SHA-256 versions and digests provide integrity binding, not encryption.
 - Keep `EXECUTION_PROVIDER=simulator`; no real GCP provider is implemented.
 - The control token is an internal shared secret, not a complete production identity system.

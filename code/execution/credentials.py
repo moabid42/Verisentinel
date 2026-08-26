@@ -70,6 +70,15 @@ class TokenMetadata:
     expires_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class CredentialInspection:
+    """Verified, non-sensitive metadata for one credential source."""
+
+    source_kind: CredentialSourceKind
+    principal: str
+    expires_at: datetime
+
+
 class AccessTokenInspector(Protocol):
     """Verify the principal and expiry of a supplied access token."""
 
@@ -232,6 +241,24 @@ class CredentialResolver:
             raise
         return lease
 
+    def inspect(self, source: CredentialSource) -> CredentialInspection:
+        """Resolve a source briefly and return only verified public metadata."""
+        if source.kind == CredentialSourceKind.ADC:
+            lease = self._resolve_adc(source)
+        elif source.kind == CredentialSourceKind.IMPERSONATE:
+            lease = self._resolve_impersonated(source, source.locator or "")
+        else:
+            lease = self._resolve_supplied(source)
+        try:
+            self._validate_expiry(lease)
+            return CredentialInspection(
+                source_kind=lease.source_kind,
+                principal=lease.principal,
+                expires_at=lease.expires_at,
+            )
+        finally:
+            lease.close()
+
     def _resolve_supplied(self, source: CredentialSource) -> CredentialLease:
         access_token = self._read_supplied_token(source)
         try:
@@ -334,6 +361,9 @@ class CredentialResolver:
             raise AuthorizationError(
                 "credential principal does not match the expected principal"
             )
+        self._validate_expiry(lease)
+
+    def _validate_expiry(self, lease: CredentialLease) -> None:
         if lease.expires_at <= _as_utc(self._now()) + self._minimum_ttl:
             raise AuthorizationError("credential lease is expired or too close to expiry")
 

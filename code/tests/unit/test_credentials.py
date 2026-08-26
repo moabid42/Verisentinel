@@ -12,6 +12,7 @@ import execution.credentials as credential_module
 from core.errors import AuthorizationError, DataConsistencyError
 from core.tracing import DebugTrace
 from execution.credentials import (
+    CredentialInspection,
     CredentialLease,
     CredentialResolver,
     CredentialSourceError,
@@ -135,6 +136,38 @@ def test_supplied_sources_resolve_verified_lease(kind: CredentialSourceKind) -> 
     assert lease.closed
     with pytest.raises(AuthorizationError, match="closed"):
         _ = lease.access_token
+
+
+def test_inspection_returns_only_metadata_and_closes_lease() -> None:
+    inspector = StaticTokenInspector()
+    resolver = CredentialResolver(
+        environ={"VERISENTINEL_TOKEN": ACCESS_TOKEN},
+        token_inspector=inspector,
+        now=lambda: NOW,
+    )
+
+    result = resolver.inspect(parse_credential_source("env:VERISENTINEL_TOKEN"))
+
+    assert result == CredentialInspection(
+        source_kind=CredentialSourceKind.ENV,
+        principal=PRINCIPAL,
+        expires_at=NOW + timedelta(minutes=10),
+    )
+    assert ACCESS_TOKEN not in repr(result)
+    assert not hasattr(result, "access_token")
+
+
+def test_inspection_rejects_expired_source_metadata() -> None:
+    resolver = CredentialResolver(
+        stdin_reader=lambda: ACCESS_TOKEN,
+        token_inspector=StaticTokenInspector(
+            expires_at=NOW - timedelta(seconds=1),
+        ),
+        now=lambda: NOW,
+    )
+
+    with pytest.raises(AuthorizationError, match="expired"):
+        resolver.inspect(parse_credential_source("stdin"))
 
 
 def test_protected_file_source_resolves_without_exposing_path(tmp_path: Path) -> None:

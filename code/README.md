@@ -205,9 +205,8 @@ The builder defaults to strict mode and refuses to publish data-consistency erro
 ## 2. Configure Gemini and the scenario
 
 The current workflow calls the Python modules directly; it does not start the HTTP APIs.
-`code/.env` and `code/scenario.yaml` have already been created and are gitignored so their secrets
-cannot be committed accidentally. Tracked examples are available as `.env.example` and
-`scenario.example.yaml`.
+`code/.env` and `code/scenario.yaml` are gitignored local configuration files. Tracked examples are
+available as `.env.example` and `scenario.example.yaml`.
 
 Put the Gemini key in `.env`:
 
@@ -233,7 +232,7 @@ target_scope: projects/authorized-sandbox-project
 
 starting_service_account:
   identity: start@authorized-sandbox-project.iam.gserviceaccount.com
-  access_token: ya29.replace-with-a-short-lived-oauth-token
+  credential_ref: run/default
   permissions:
     - storage.objects.get
 
@@ -245,12 +244,12 @@ detections:
 
 The permissions are the effective permissions already known for that identity at `target_scope`.
 They must exist in the current matrix. The prototype does not infer all effective permissions from
-an OAuth token because GCP permissions are resource-specific.
+a credential reference because GCP permissions are resource-specific.
 
-The raw access token is loaded into an in-memory credential vault owned by the execution boundary.
-Only an opaque SHA-256 reference is placed in the Environment Brain and persisted runtime records.
-Neither the token nor the Gemini key is sent to the proposer or written to the debug trace.
-Because the current execution provider is the simulator, it does not yet send that token to GCP.
+`credential_ref` is an opaque identifier, not a token or credential-source descriptor. It is the
+only credential-related value placed in the Environment Brain and persisted runtime records. The
+current simulator does not resolve or use credential material. Never put a raw credential in the
+scenario file.
 
 ## 3. Run the direct human-gated loop
 

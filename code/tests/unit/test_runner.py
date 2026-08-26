@@ -10,14 +10,13 @@ from core.models import (
     Proposal,
 )
 from core.tracing import DebugTrace
-from execution.credentials import InMemoryCredentialVault
 from runner.scenario import ScenarioError, load_scenario
 from runner.terminal import parse_choice
 
-ACCESS_TOKEN = "ya29.test-access-token-that-is-long-enough"
+TEST_SECRET = "synthetic-sensitive-value-for-redaction"
 
 
-def write_scenario(path: Path, access_token: str = ACCESS_TOKEN) -> None:
+def write_scenario(path: Path, credential_ref: str = "run/default") -> None:
     path.write_text(
         f"""name: test-scenario
 objective: Evaluate storage paths
@@ -25,7 +24,7 @@ operator: human@example.test
 target_scope: projects/security-sandbox
 starting_service_account:
   identity: start@security-sandbox.iam.gserviceaccount.com
-  access_token: {access_token}
+  credential_ref: {credential_ref}
   permissions:
     - storage.objects.get
 """,
@@ -62,48 +61,88 @@ def candidate(identifier: str = "candidate") -> CandidateCard:
     )
 
 
-def test_scenario_loads_access_token_as_a_secret(tmp_path: Path) -> None:
+def test_scenario_loads_opaque_credential_reference(tmp_path: Path) -> None:
     path = tmp_path / "scenario.yaml"
     write_scenario(path)
 
     scenario = load_scenario(path)
 
-    assert scenario.starting_service_account.access_token.get_secret_value() == ACCESS_TOKEN
-    assert ACCESS_TOKEN not in scenario.model_dump_json()
+    assert scenario.starting_service_account.credential_ref == "run/default"
+    assert scenario.model_dump(mode="json")["starting_service_account"] == {
+        "identity": "start@security-sandbox.iam.gserviceaccount.com",
+        "credential_ref": "run/default",
+        "permissions": ["storage.objects.get"],
+    }
 
 
-def test_scenario_rejects_an_unedited_token_placeholder(tmp_path: Path) -> None:
+def test_scenario_rejects_embedded_access_token(tmp_path: Path) -> None:
     path = tmp_path / "scenario.yaml"
-    write_scenario(path, "REPLACE_WITH_A_REAL_ACCESS_TOKEN")
+    path.write_text(
+        """name: test-scenario
+objective: Evaluate storage paths
+operator: human@example.test
+target_scope: projects/security-sandbox
+starting_service_account:
+  identity: start@security-sandbox.iam.gserviceaccount.com
+  credential_ref: run/default
+  access_token: synthetic-token-must-not-be-loaded
+  permissions:
+    - storage.objects.get
+""",
+        encoding="utf-8",
+    )
 
-    with pytest.raises(ScenarioError, match="placeholder"):
+    with pytest.raises(ScenarioError, match="access_token") as raised:
+        load_scenario(path)
+    assert "synthetic-token-must-not-be-loaded" not in str(raised.value)
+
+
+def test_scenario_requires_credential_reference(tmp_path: Path) -> None:
+    path = tmp_path / "scenario.yaml"
+    path.write_text(
+        """name: test-scenario
+objective: Evaluate storage paths
+operator: human@example.test
+target_scope: projects/security-sandbox
+starting_service_account:
+  identity: start@security-sandbox.iam.gserviceaccount.com
+  permissions:
+    - storage.objects.get
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ScenarioError, match="credential_ref"):
         load_scenario(path)
 
 
-def test_credential_vault_returns_only_an_opaque_reference() -> None:
-    vault = InMemoryCredentialVault()
+@pytest.mark.parametrize("credential_ref", ["", "contains spaces", "env:RAW_VALUE"])
+def test_scenario_rejects_invalid_credential_reference(
+    tmp_path: Path,
+    credential_ref: str,
+) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path, credential_ref)
 
-    reference = vault.register_access_token("identity", ACCESS_TOKEN)
-
-    assert ACCESS_TOKEN not in reference
-    assert vault.resolve(reference) == ACCESS_TOKEN
+    with pytest.raises(ScenarioError, match="credential_ref"):
+        load_scenario(path)
 
 
 def test_debug_trace_redacts_named_and_embedded_secrets(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
-    trace = DebugTrace(path, "run", secrets=(ACCESS_TOKEN,), echo=False)
+    trace = DebugTrace(path, "run", secrets=(TEST_SECRET,), echo=False)
 
     trace.emit(
         "test",
         "redaction",
-        access_token=ACCESS_TOKEN,
-        message=f"failed while using {ACCESS_TOKEN}",
+        access_token=TEST_SECRET,
+        message=f"failed while using {TEST_SECRET}",
         usage={"total_tokens": 42},
     )
 
     text = path.read_text(encoding="utf-8")
     record = json.loads(text)
-    assert ACCESS_TOKEN not in text
+    assert TEST_SECRET not in text
     assert record["details"]["access_token"] == "[REDACTED]"
     assert record["details"]["message"] == "failed while using [REDACTED]"
     assert record["details"]["usage"]["total_tokens"] == 42

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator
 
 from core.models import ImmutableModel
 
@@ -15,19 +15,12 @@ class ScenarioError(ValueError):
 
 class StartingServiceAccount(ImmutableModel):
     identity: str = Field(min_length=1)
-    access_token: SecretStr
+    credential_ref: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+    )
     permissions: tuple[str, ...] = Field(min_length=1)
-
-    @field_validator("access_token", mode="before")
-    @classmethod
-    def token_is_not_a_placeholder(cls, value: object) -> object:
-        token = str(value).strip()
-        if len(token) < 20:
-            raise ValueError("access_token must contain a non-placeholder token of 20+ characters")
-        normalized = token.lower()
-        if "replace" in normalized or "your_" in normalized or "placeholder" in normalized:
-            raise ValueError("replace the access_token placeholder before running the scenario")
-        return token
 
     @field_validator("permissions")
     @classmethod

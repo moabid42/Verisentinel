@@ -66,21 +66,20 @@ def main(arguments: list[str] | None = None) -> int:
 
     paths = Paths()
     run_id = new_id("run")
-    access_token = scenario.starting_service_account.access_token.get_secret_value()
     trace_path = paths.runtime / "traces" / f"{run_id}.jsonl"
     progress_path = paths.runtime / "traces" / f"{run_id}.progress.log"
     conversation_path = paths.runtime / "traces" / f"{run_id}.model-conversation.jsonl"
     trace = DebugTrace(
         trace_path,
         run_id,
-        secrets=(api_key, access_token),
+        secrets=(api_key,),
         echo=not options.quiet_trace,
         progress_path=progress_path,
     )
     conversation_trace = DebugTrace(
         conversation_path,
         run_id,
-        secrets=(api_key, access_token),
+        secrets=(api_key,),
         echo=False,
     )
     conversation_trace.emit(
@@ -124,10 +123,6 @@ def main(arguments: list[str] | None = None) -> int:
         proposer = ProposerService(snapshots=snapshots, gemini=gemini, paths=paths)
         launchpad = LaunchpadService(paths=paths)
         execution = ExecutionService(snapshots=snapshots, paths=paths, trace=trace)
-        credential_reference = execution.register_access_token(
-            scenario.starting_service_account.identity,
-            access_token,
-        )
         planner = GreenAgent(
             snapshots=snapshots,
             proposer=proposer,
@@ -140,7 +135,7 @@ def main(arguments: list[str] | None = None) -> int:
             CreateEngagementRequest(
                 objective=scenario.objective,
                 identity=scenario.starting_service_account.identity,
-                credential=credential_reference,
+                credential=scenario.starting_service_account.credential_ref,
                 target_scope=scenario.target_scope,
                 permissions=scenario.starting_service_account.permissions,
                 state_source=f"scenario:{scenario.name}",

@@ -5,7 +5,7 @@ target_scope: projects/replace-with-authorized-sandbox-project
 
 starting_service_account:
   identity: starting-service-account@replace-with-project.iam.gserviceaccount.com
-  access_token: REPLACE_WITH_SHORT_LIVED_OAUTH_ACCESS_TOKEN
+  credential_ref: run/default
   permissions:
     # These must be the effective permissions already known at target_scope.
     - storage.objects.get

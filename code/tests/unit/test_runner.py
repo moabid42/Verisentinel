@@ -13,6 +13,7 @@ from core.models import (
     Proposal,
 )
 from core.tracing import DebugTrace
+from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
 from execution.credentials import CredentialInspection, CredentialSourceKind
 from runner.application import CorpusStatus, PlannerRunRequest
 from runner.cli import app, main
@@ -256,12 +257,31 @@ def test_corpus_routes_render_service_results(
     assert current.stdout == "Status: not built\n"
 
 
-def test_sandbox_doctor_reports_planned_provider_unavailable() -> None:
+def test_sandbox_doctor_reports_each_readiness_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "inspect_sandbox",
+        lambda: CapsuleDoctorReport(
+            available=True,
+            provider="capsule",
+            detail="Local execution capsule is ready.",
+            checks=(
+                CapsuleCheck(
+                    name="runtime",
+                    passed=True,
+                    detail="Docker daemon is available",
+                ),
+            ),
+        ),
+    )
     result = CLI.invoke(app, ["sandbox", "doctor"])
 
     assert result.exit_code == 0
     assert "Provider: capsule" in result.stdout
-    assert "Status: unavailable" in result.stdout
+    assert "Status: available" in result.stdout
+    assert "Check runtime: pass" in result.stdout
 
 
 def test_run_routes_validated_input_to_application_service(

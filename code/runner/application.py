@@ -21,6 +21,7 @@ from core.models import (
     OperatorDecision,
 )
 from core.tracing import DebugTrace
+from execution.capsule.doctor import CapsuleDoctor, CapsuleDoctorReport
 from execution.credentials import (
     CredentialInspection,
     CredentialResolver,
@@ -56,6 +57,12 @@ class CorpusGateway(Protocol):
     def current(self) -> MatrixSnapshot: ...
 
 
+class CapsuleDoctorGateway(Protocol):
+    """Read-only capsule operation needed by sandbox diagnostics."""
+
+    def inspect(self) -> CapsuleDoctorReport: ...
+
+
 @dataclass(frozen=True, slots=True)
 class CorpusStatus:
     """Bounded summary of the current coverage corpus."""
@@ -65,15 +72,6 @@ class CorpusStatus:
     permission_count: int = 0
     detection_count: int = 0
     technique_count: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class SandboxStatus:
-    """Readiness state for the planned local execution capsule."""
-
-    available: bool
-    provider: str
-    detail: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,13 +113,12 @@ def read_corpus_status(*, service: CorpusGateway | None = None) -> CorpusStatus:
     return _corpus_status(snapshot)
 
 
-def inspect_sandbox() -> SandboxStatus:
+def inspect_sandbox(
+    *,
+    doctor: CapsuleDoctorGateway | None = None,
+) -> CapsuleDoctorReport:
     """Report local capsule readiness without changing runtime state."""
-    return SandboxStatus(
-        available=False,
-        provider="capsule",
-        detail="Local execution capsule is not installed; the simulator remains available.",
-    )
+    return (doctor or CapsuleDoctor()).inspect()
 
 
 def run_planner(request: PlannerRunRequest) -> int:

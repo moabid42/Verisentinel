@@ -54,7 +54,7 @@ class ExecutionAttempt(ImmutableModel):
     attempt_id: str
     approval_id: str
     engagement_id: str
-    provider: Literal["simulator", "evaluation", "gcp"]
+    provider: Literal["simulator", "capsule", "evaluation", "gcp"]
     status: ExecutionAttemptStatus = ExecutionAttemptStatus.RESERVED
     started_at: datetime = Field(default_factory=utc_now)
     completed_at: datetime | None = None

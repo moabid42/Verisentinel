@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 from core.models import ExecutionObservation, ExecutionSpec
 from execution.credentials import CredentialLease
 
-ExecutionProviderName = Literal["simulator", "evaluation", "gcp"]
+ExecutionProviderName = Literal["simulator", "capsule", "evaluation", "gcp"]
 
 
 class ExecutionProvider(Protocol):

@@ -318,7 +318,7 @@ class ExecutionSpec(ImmutableModel):
 
 class ExecutionResult(ImmutableModel):
     observation: ExecutionObservation
-    provider: Literal["simulator", "evaluation", "gcp"]
+    provider: Literal["simulator", "capsule", "evaluation", "gcp"]
 
 
 class EngagementStatus(StrEnum):

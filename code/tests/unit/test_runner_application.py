@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from core.models import MatrixSnapshot
+from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
 from execution.credentials import (
     CredentialResolver,
     CredentialSourceKind,
@@ -53,6 +54,24 @@ class StubIngestor:
 
     def current(self) -> MatrixSnapshot:
         return cast(MatrixSnapshot, self.snapshot)
+
+
+class StubDoctor:
+    """Return a fixed capsule readiness result without invoking Docker."""
+
+    def inspect(self) -> CapsuleDoctorReport:
+        return CapsuleDoctorReport(
+            available=False,
+            provider="capsule",
+            detail="Local execution capsule is not ready.",
+            checks=(
+                CapsuleCheck(
+                    name="runtime",
+                    passed=False,
+                    detail="Docker daemon is unavailable",
+                ),
+            ),
+        )
 
 
 def test_scenario_validation_returns_validated_model(tmp_path: Path) -> None:
@@ -108,8 +127,9 @@ def test_corpus_commands_return_bounded_snapshot_metadata() -> None:
 
 
 def test_sandbox_status_is_explicitly_unavailable() -> None:
-    status = inspect_sandbox()
+    status = inspect_sandbox(doctor=StubDoctor())
 
     assert not status.available
     assert status.provider == "capsule"
-    assert "not installed" in status.detail
+    assert "not ready" in status.detail
+    assert status.checks[0].name == "runtime"

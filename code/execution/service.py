@@ -43,16 +43,29 @@ class ExecutionService:
         self.trace = trace
         selected_provider = provider or os.getenv("EXECUTION_PROVIDER", "simulator")
         if provider_impl is None:
-            if selected_provider != "simulator":
+            if selected_provider == "simulator":
+                provider_impl = SimulatorExecutionProvider()
+            elif selected_provider == "capsule":
+                from execution.capsule.doctor import CapsuleDoctor
+                from execution.capsule.provider import (
+                    CapsuleConfiguration,
+                    CapsuleExecutionProvider,
+                )
+                from execution.capsule.runtime import DockerRuntime
+
+                configuration = CapsuleConfiguration.from_environment()
+                runtime = DockerRuntime()
+                CapsuleDoctor(configuration, runtime).require_ready()
+                provider_impl = CapsuleExecutionProvider(configuration, runtime)
+            else:
                 raise ValueError(
                     f"execution provider {selected_provider!r} is not registered"
                 )
-            provider_impl = SimulatorExecutionProvider()
         elif provider is not None and provider != provider_impl.name:
             raise ValueError(
                 "execution provider selector does not match the supplied provider"
             )
-        if provider_impl.name not in {"simulator", "evaluation", "gcp"}:
+        if provider_impl.name not in {"simulator", "capsule", "evaluation", "gcp"}:
             raise ValueError(
                 f"execution provider {provider_impl.name!r} is not registered"
             )

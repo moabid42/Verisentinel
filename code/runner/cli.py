@@ -111,6 +111,11 @@ def sandbox_doctor() -> None:
     typer.echo(f"Provider: {status.provider}")
     typer.echo(f"Status: {'available' if status.available else 'unavailable'}")
     typer.echo(f"Detail: {_bounded(status.detail)}")
+    for check in status.checks:
+        outcome = "pass" if check.passed else "fail"
+        typer.echo(
+            f"Check {check.name}: {outcome} - {_bounded(check.detail)}"
+        )
 
 
 @app.command("run")

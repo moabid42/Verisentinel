@@ -8,6 +8,7 @@ from core.models import (
     ApprovalRecord,
     ExecutionRequest,
     ExecutionResult,
+    ExecutionSpec,
     ImmutableModel,
     utc_now,
 )
@@ -41,4 +42,5 @@ class ExecutionRecord(ImmutableModel):
     request: ExecutionRequest
     approval: ApprovalRecord
     result: ExecutionResult
+    spec: ExecutionSpec | None = None
     recorded_at: datetime = Field(default_factory=utc_now)

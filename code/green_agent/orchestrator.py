@@ -19,6 +19,7 @@ from core.models import (
     Proposal,
     ProposalRequest,
     StateValidationRequest,
+    TechniqueActionParameters,
 )
 from core.security import stable_digest
 from core.tracing import DebugTrace
@@ -397,7 +398,7 @@ class GreenAgent:
                 "selected candidate is no longer admissible and must be reproposed"
             )
 
-        arguments: dict = {}
+        arguments = TechniqueActionParameters()
         approval = ApprovalRecord(
             approval_id=new_id("approval"),
             engagement_id=engagement.engagement_id,
@@ -405,11 +406,12 @@ class GreenAgent:
             action_id=candidate.proposal.action_id,
             identity=candidate.proposal.identity,
             target=candidate.proposal.target,
-            arguments_digest=stable_digest(arguments),
+            arguments_digest=stable_digest(arguments.model_dump(mode="json")),
             validator_result_id=validation.result_id,
             state_version=current_state_version,
             matrix_version=engagement.matrix_version,
             operator=decision.operator,
+            credential_ref=state.credential,
         )
         request = ExecutionRequest(
             engagement_id=engagement.engagement_id,
@@ -422,6 +424,7 @@ class GreenAgent:
             approval_id=approval.approval_id,
             state_version=current_state_version,
             matrix_version=engagement.matrix_version,
+            credential_ref=state.credential,
         )
         self.repository.record_approval(approval)
         self.execution.authorize(self._authorization(engagement, enabled=True))

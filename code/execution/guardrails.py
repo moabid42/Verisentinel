@@ -40,6 +40,7 @@ def verify_execution_authority(
         "validator_result_id",
         "state_version",
         "matrix_version",
+        "credential_ref",
     )
     changed = [
         field
@@ -48,7 +49,7 @@ def verify_execution_authority(
     ]
     if request.approval_id != approval.approval_id:
         changed.append("approval_id")
-    if stable_digest(request.arguments) != approval.arguments_digest:
+    if stable_digest(request.arguments.model_dump(mode="json")) != approval.arguments_digest:
         changed.append("arguments")
     if changed:
         raise AuthorizationError(

@@ -23,8 +23,8 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.service_account import Credentials as ServiceAccountKeyCredentials
 
 from core.errors import AuthorizationError, DataConsistencyError
+from core.models import CREDENTIAL_REFERENCE_PATTERN
 
-CREDENTIAL_REFERENCE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SERVICE_ACCOUNT_PATTERN = re.compile(
     r"^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$"

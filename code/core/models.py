@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+CREDENTIAL_REFERENCE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -128,7 +130,7 @@ class ExecutionObservation(ImmutableModel):
     identity: str
     target: str
     success: bool
-    api_response_summary: str
+    api_response_summary: str = Field(max_length=4096)
     gained_permissions: tuple[str, ...] = ()
     revoked_permissions: tuple[str, ...] = ()
     gained_capabilities: tuple[str, ...] = ()
@@ -251,7 +253,26 @@ class ApprovalRecord(ImmutableModel):
     state_version: str
     matrix_version: str
     operator: str
+    credential_ref: str = Field(
+        default="",
+        pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9._/-]{0,127})?$",
+    )
     approved_at: datetime = Field(default_factory=utc_now)
+
+
+class TechniqueActionParameters(ImmutableModel):
+    """The strict parameter model for current catalog technique actions."""
+
+
+class ActionDefinition(ImmutableModel):
+    """A registered provider-neutral action definition."""
+
+    action_id: str = Field(pattern=r"^technique:\S+$")
+    provider_operation: Literal["catalog.technique"] = "catalog.technique"
+    parameter_model: Literal["technique.none.v1"] = "technique.none.v1"
+    technique_id: str = Field(min_length=1)
+    observed_permission_footprint: tuple[str, ...] = ()
+    expected_capabilities: tuple[str, ...] = ()
 
 
 class ExecutionRequest(ImmutableModel):
@@ -260,11 +281,39 @@ class ExecutionRequest(ImmutableModel):
     action_id: str
     identity: str
     target: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: TechniqueActionParameters = Field(
+        default_factory=TechniqueActionParameters
+    )
     validator_result_id: str
     approval_id: str
     state_version: str
     matrix_version: str
+    credential_ref: str = Field(
+        default="",
+        pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9._/-]{0,127})?$",
+    )
+
+
+class ExecutionSpec(ImmutableModel):
+    """Immutable provider input derived from an approved execution request."""
+
+    engagement_id: str
+    candidate_id: str
+    action: ActionDefinition
+    identity: str
+    target: str
+    arguments: TechniqueActionParameters
+    validator_result_id: str
+    approval_id: str
+    state_version: str
+    matrix_version: str
+    credential_ref: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=CREDENTIAL_REFERENCE_PATTERN,
+    )
+    timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    output_limit_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
 
 
 class ExecutionResult(ImmutableModel):

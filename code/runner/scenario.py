@@ -6,8 +6,7 @@ from typing import Literal
 import yaml
 from pydantic import Field, ValidationError, field_validator
 
-from core.models import ImmutableModel
-from execution.credentials import CREDENTIAL_REFERENCE_PATTERN
+from core.models import CREDENTIAL_REFERENCE_PATTERN, ImmutableModel
 
 
 class ScenarioError(ValueError):

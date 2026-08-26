@@ -94,7 +94,12 @@ class ExecutionService:
             result = ExecutionResult(observation=observation, provider="simulator")
             try:
                 self.repository.record(
-                    ExecutionRecord(request=request, approval=approval, result=result)
+                    ExecutionRecord(
+                        request=request,
+                        approval=approval,
+                        result=result,
+                        spec=action.spec,
+                    )
                 )
             except DataConsistencyError as error:
                 raise AuthorizationError(str(error)) from error

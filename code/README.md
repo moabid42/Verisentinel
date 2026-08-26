@@ -407,6 +407,15 @@ the current direct runner.
 There is no deterministic proposal fallback. Gemini still never decides feasibility, coverage,
 approval, or execution.
 
+## Execution contracts
+
+The action registry converts a catalog technique into an immutable `ActionDefinition` and
+`ExecutionSpec`. Current technique actions use a strict empty parameter model: unknown fields,
+command strings, and other free-form arguments fail validation. The spec binds the exact action,
+identity, target, credential reference, validator result, approval, state version, and matrix
+version before it can reach a provider. Existing persisted requests with an empty `arguments`
+object remain readable.
+
 ## Generated state
 
 The application writes JSON under `artifacts/` and `runtime/`:

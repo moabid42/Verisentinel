@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +26,7 @@ from runner.application import (
 )
 from runner.scenario import ScenarioError
 from runner.session import ShellSessionRepository
+from runner.shell import InteractiveShell
 from runner.terminal import TerminalUI
 
 _OUTPUT_LIMIT = 512
@@ -71,7 +73,25 @@ app.add_typer(session_app, name="session")
 def launchpad(context: typer.Context) -> None:
     """Open the terminal command launchpad."""
     if context.invoked_subcommand is None:
-        TerminalUI().home()
+        if _interactive_terminal():
+            _run_shell()
+        else:
+            TerminalUI().home()
+
+
+@app.command("shell")
+def shell_command(
+    resume: Annotated[
+        str | None,
+        typer.Option(
+            "--resume",
+            metavar="SESSION_ID",
+            help="Resume an existing terminal session.",
+        ),
+    ] = None,
+) -> None:
+    """Open the persistent interactive terminal shell."""
+    _run_shell(resume)
 
 
 @scenario_app.command("validate")
@@ -200,6 +220,14 @@ def session_show(
     TerminalUI().session(session)
 
 
+@session_app.command("resume")
+def session_resume(
+    session_id: Annotated[str, typer.Argument(help="Opaque terminal session ID.")],
+) -> None:
+    """Resume an existing interactive terminal session."""
+    _run_shell(session_id)
+
+
 @app.command("run")
 def run_command(
     scenario: Annotated[
@@ -322,6 +350,21 @@ def _render_corpus(status: CorpusStatus) -> None:
 
 def _session_repository() -> ShellSessionRepository:
     return ShellSessionRepository(Paths().runtime / "shell" / "sessions")
+
+
+def _run_shell(resume_session_id: str | None = None) -> None:
+    shell = InteractiveShell(
+        repository=_session_repository(),
+        executor=main,
+    )
+    _invoke(
+        lambda: shell.run(resume_session_id),
+        input_errors=(NotFoundError, ValueError),
+    )
+
+
+def _interactive_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _bounded(value: str) -> str:

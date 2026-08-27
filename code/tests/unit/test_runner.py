@@ -146,6 +146,7 @@ def test_top_level_and_nested_help_are_stable(
     monkeypatch.setenv("GEMINI_API_KEY", TEST_SECRET)
     routes = (
         ("--help",),
+        ("shell", "--help"),
         ("scenario", "--help"),
         ("scenario", "validate", "--help"),
         ("scenario", "run", "--help"),
@@ -160,6 +161,7 @@ def test_top_level_and_nested_help_are_stable(
         ("session", "--help"),
         ("session", "list", "--help"),
         ("session", "show", "--help"),
+        ("session", "resume", "--help"),
         ("run", "--help"),
     )
     results = tuple(CLI.invoke(app, list(route)) for route in routes)
@@ -171,10 +173,11 @@ def test_top_level_and_nested_help_are_stable(
     assert "corpus" in top_level.stdout
     assert "sandbox" in top_level.stdout
     assert "session" in top_level.stdout
+    assert "shell" in top_level.stdout
     assert "run" in top_level.stdout
     assert ".env" not in top_level.stdout
-    assert "validate" in results[1].stdout
-    assert "run" in results[1].stdout
+    assert "validate" in results[2].stdout
+    assert "run" in results[2].stdout
     assert all(result.exit_code == 0 for result in results)
     assert all(TEST_SECRET not in result.output for result in results)
 
@@ -349,6 +352,39 @@ def test_session_show_rejects_invalid_identifier() -> None:
 
     assert result.exit_code == 2
     assert "INPUT ERROR" in result.output
+
+
+def test_shell_command_creates_and_closes_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("IAM_PLANNER_RUNTIME", str(tmp_path))
+
+    result = CLI.invoke(app, ["shell"], input="/exit\n")
+
+    sessions = ShellSessionRepository(tmp_path / "shell" / "sessions").list()
+    assert result.exit_code == 0
+    assert "NEW SESSION" in result.stdout
+    assert "saved" in result.stdout
+    assert len(sessions) == 1
+    assert sessions[0].status.value == "closed"
+
+
+def test_no_arguments_opens_shell_only_for_interactive_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str | None] = []
+    monkeypatch.setattr(cli_module, "_interactive_terminal", lambda: True)
+    monkeypatch.setattr(
+        cli_module,
+        "_run_shell",
+        lambda session_id=None: calls.append(session_id),
+    )
+
+    result = CLI.invoke(app, [])
+
+    assert result.exit_code == 0
+    assert calls == [None]
 
 
 def test_run_routes_validated_input_to_application_service(

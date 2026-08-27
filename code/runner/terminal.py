@@ -55,12 +55,14 @@ class TerminalUI:
         commands = Table.grid(padding=(0, 3))
         commands.add_column(style="accent", no_wrap=True)
         commands.add_column()
+        commands.add_row("shell", "Open the persistent interactive workspace")
         commands.add_row("scenario validate PATH", "Check a scenario before a run")
         commands.add_row("scenario run PATH", "Start an approval-gated scenario")
         commands.add_row("corpus build", "Build the authorization corpus")
         commands.add_row("corpus status", "Inspect the current corpus")
         commands.add_row("sandbox build", "Prepare the local execution capsule")
         commands.add_row("sandbox doctor", "Verify capsule isolation and readiness")
+        commands.add_row("session list", "Inspect saved terminal sessions")
         self.console.print(
             Panel(
                 Group(
@@ -75,10 +77,104 @@ class TerminalUI:
                 ),
                 border_style="cyan",
                 padding=(1, 2),
-                subtitle="verisentinel --help for every option",
+                subtitle="interactive terminals open the shell automatically",
                 subtitle_align="left",
             )
         )
+
+    def shell_started(self, session: ShellSession, *, resumed: bool) -> None:
+        """Render the compact header for an interactive terminal workspace."""
+        state = "RESUMED" if resumed else "NEW SESSION"
+        content = Group(
+            self._heading("VERISENTINEL", state, "success"),
+            Text(session.session_id, style="muted"),
+            Text(""),
+            Text("Describe an operation or enter /help for commands."),
+        )
+        self.console.print(
+            Panel(
+                content,
+                border_style="cyan",
+                padding=(1, 2),
+                subtitle="approval-gated · no system shell",
+                subtitle_align="left",
+            )
+        )
+
+    def shell_prompt(self, session: ShellSession) -> str:
+        """Return the styled prompt for a terminal session."""
+        short_id = session.session_id.removeprefix("session_")[:8]
+        return f"[muted]{short_id}[/muted] [accent]›[/accent] "
+
+    def read_shell_command(self, prompt: str) -> str:
+        """Read one interactive command from the terminal."""
+        return self.console.input(prompt)
+
+    def shell_help(self) -> None:
+        """Render command and slash-command guidance inside the shell."""
+        commands = Table.grid(padding=(0, 3))
+        commands.add_column(style="accent", no_wrap=True)
+        commands.add_column()
+        commands.add_row("build corpus", "Build the authorization corpus")
+        commands.add_row("build sandbox", "Prepare the execution capsule")
+        commands.add_row("check sandbox", "Run capsule readiness checks")
+        commands.add_row("validate scenario PATH", "Validate a scenario file")
+        commands.add_row("run scenario PATH …", "Start the approval-gated workflow")
+        commands.add_row("session list", "List terminal sessions")
+
+        slash = Table.grid(padding=(0, 3))
+        slash.add_column(style="accent", no_wrap=True)
+        slash.add_column()
+        slash.add_row("/status", "Show this session")
+        slash.add_row("/history", "Show sanitized command outcomes")
+        slash.add_row("/sessions", "List all sessions")
+        slash.add_row("/new", "Close this session and start another")
+        slash.add_row("/clear", "Clear the terminal")
+        slash.add_row("/exit", "Save and leave")
+        self.console.print(
+            Panel(
+                Group(
+                    Text("COMMANDS", style="label"),
+                    commands,
+                    Text(""),
+                    Text("SESSION", style="label"),
+                    slash,
+                ),
+                title="[accent]HELP[/accent]",
+                title_align="left",
+                border_style="cyan",
+                padding=(1, 1),
+            )
+        )
+
+    def shell_error(self, message: str) -> None:
+        """Render a recoverable shell input error."""
+        text = Text("INPUT  ", style="failure")
+        text.append(message)
+        self.console.print(text)
+
+    def shell_command_failed(self, exit_code: int) -> None:
+        """Keep the session active after a command-level failure."""
+        self.console.print(
+            f"[warning]Command exited with {exit_code}.[/warning] Session remains active."
+        )
+
+    def shell_interrupted(self) -> None:
+        """Explain prompt interruption without closing the session."""
+        self.console.print(
+            "[warning]Input cancelled.[/warning] Enter /exit or press Ctrl+D to leave."
+        )
+
+    def shell_closed(self, session: ShellSession) -> None:
+        """Render a compact saved-session confirmation."""
+        self.console.print(
+            f"[muted]Session {session.session_id} saved · "
+            f"{session.command_count} commands[/muted]"
+        )
+
+    def clear(self) -> None:
+        """Clear the active terminal display."""
+        self.console.clear()
 
     def success(self, title: str, detail: str | None = None) -> None:
         """Render a compact successful outcome."""

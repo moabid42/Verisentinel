@@ -223,7 +223,6 @@ def test_endpoint_failure_consumes_approval_and_cleans_capsule(
 
 
 def _build_locked_image() -> str:
-    image = (CAPSULE_DIRECTORY / "image.lock").read_text(encoding="utf-8").strip()
     _run(
         (
             "docker",
@@ -237,10 +236,16 @@ def _build_locked_image() -> str:
         )
     )
     identifier = _run(
-        ("docker", "image", "inspect", image, "--format", "{{.Id}}")
+        (
+            "docker",
+            "image",
+            "inspect",
+            "verisentinel-capsule:integration",
+            "--format",
+            "{{.Id}}",
+        )
     ).stdout.strip()
-    assert identifier == image.rsplit("@", maxsplit=1)[1]
-    return image
+    return f"verisentinel-capsule@{identifier}"
 
 
 def _start_endpoint(name: str, network: str, token_path: Path) -> None:

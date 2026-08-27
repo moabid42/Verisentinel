@@ -53,7 +53,12 @@ def test_build_verifies_image_and_creates_internal_network(tmp_path: Path) -> No
         [output(), output(stdout=IMAGE_ID.encode()), output(1), output()]
     )
 
-    report = CapsuleBuilder(configuration(tmp_path), runtime).build()
+    lock_path = tmp_path / "runtime" / "image.lock"
+    report = CapsuleBuilder(
+        configuration(tmp_path),
+        runtime,
+        image_lock_path=lock_path,
+    ).build()
 
     assert report.network_created
     assert runtime.calls[0][:4] == (
@@ -68,6 +73,7 @@ def test_build_verifies_image_and_creates_internal_network(tmp_path: Path) -> No
         "--internal",
         "verisentinel-capsule",
     )
+    assert lock_path.read_text(encoding="utf-8").strip() == report.image
 
 
 def test_build_reuses_existing_internal_network(tmp_path: Path) -> None:
@@ -75,19 +81,31 @@ def test_build_reuses_existing_internal_network(tmp_path: Path) -> None:
         [output(), output(stdout=IMAGE_ID.encode()), output(stdout=b"true\n")]
     )
 
-    report = CapsuleBuilder(configuration(tmp_path), runtime).build()
+    report = CapsuleBuilder(
+        configuration(tmp_path),
+        runtime,
+        image_lock_path=tmp_path / "runtime" / "image.lock",
+    ).build()
 
     assert not report.network_created
     assert len(runtime.calls) == 3
 
 
-def test_build_rejects_image_outside_digest_lock(tmp_path: Path) -> None:
+def test_build_activates_resulting_image_digest(tmp_path: Path) -> None:
+    built_id = "sha256:" + "b" * 64
     runtime = ScriptedRuntime(
-        [output(), output(stdout=("sha256:" + "b" * 64).encode())]
+        [output(), output(stdout=built_id.encode()), output(stdout=b"true\n")]
     )
+    lock_path = tmp_path / "runtime" / "image.lock"
 
-    with pytest.raises(DockerRuntimeError, match="digest lock"):
-        CapsuleBuilder(configuration(tmp_path), runtime).build()
+    report = CapsuleBuilder(
+        configuration(tmp_path),
+        runtime,
+        image_lock_path=lock_path,
+    ).build()
+
+    assert report.image == f"verisentinel-capsule@{built_id}"
+    assert lock_path.read_text(encoding="utf-8").strip() == report.image
 
 
 def test_build_rejects_existing_external_network(tmp_path: Path) -> None:
@@ -95,5 +113,11 @@ def test_build_rejects_existing_external_network(tmp_path: Path) -> None:
         [output(), output(stdout=IMAGE_ID.encode()), output(stdout=b"false\n")]
     )
 
+    lock_path = tmp_path / "runtime" / "image.lock"
     with pytest.raises(DockerRuntimeError, match="not internal"):
-        CapsuleBuilder(configuration(tmp_path), runtime).build()
+        CapsuleBuilder(
+            configuration(tmp_path),
+            runtime,
+            image_lock_path=lock_path,
+        ).build()
+    assert not lock_path.exists()

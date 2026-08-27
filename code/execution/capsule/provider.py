@@ -14,6 +14,7 @@ from typing import Literal, Protocol
 
 from pydantic import ValidationError
 
+from core.config import Paths
 from core.models import ExecutionObservation, ExecutionSpec
 from execution.capsule.runtime import (
     DockerRuntime,
@@ -25,7 +26,7 @@ from execution.capsule.runtime import (
 from execution.credentials import CredentialLease
 
 _CAPSULE_DIRECTORY = Path(__file__).resolve().parent
-_IMAGE_LOCK_PATH = _CAPSULE_DIRECTORY / "image.lock"
+_BOOTSTRAP_IMAGE_LOCK_PATH = _CAPSULE_DIRECTORY / "image.lock"
 _IMAGE_PATTERN = re.compile(r"^verisentinel-capsule@sha256:[0-9a-f]{64}$")
 _NETWORK_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 _SPEC_DESTINATION = "/run/verisentinel/spec.json"
@@ -81,7 +82,7 @@ class CapsuleConfiguration:
 
     def __post_init__(self) -> None:
         if _IMAGE_PATTERN.fullmatch(self.image) is None:
-            raise ValueError("capsule image must use the repository digest lock")
+            raise ValueError("capsule image must use an immutable digest reference")
         if _NETWORK_PATTERN.fullmatch(self.network) is None:
             raise ValueError("capsule network name has an invalid format")
         if self.user_id <= 0 or self.group_id < 0:
@@ -89,15 +90,22 @@ class CapsuleConfiguration:
 
     @classmethod
     def from_environment(cls) -> CapsuleConfiguration:
-        """Load the digest lock and non-sensitive network selection."""
+        """Load the active digest lock and non-sensitive network selection."""
+        active_lock = capsule_image_lock_path()
+        lock_path = active_lock if active_lock.exists() else _BOOTSTRAP_IMAGE_LOCK_PATH
         try:
-            image = _IMAGE_LOCK_PATH.read_text(encoding="utf-8").strip()
+            image = lock_path.read_text(encoding="utf-8").strip()
         except OSError:
             raise ValueError("capsule image digest lock is unavailable") from None
         return cls(
             image=image,
             network=os.getenv("VERISENTINEL_CAPSULE_NETWORK", "verisentinel-capsule"),
         )
+
+
+def capsule_image_lock_path() -> Path:
+    """Return the generated lock for the most recent local capsule build."""
+    return Paths().runtime / "capsule" / "image.lock"
 
 
 @dataclass(frozen=True, slots=True)

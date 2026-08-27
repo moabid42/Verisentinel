@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from execution.capsule.provider import CapsuleConfiguration
+from execution.capsule.provider import CapsuleConfiguration, capsule_image_lock_path
 from execution.capsule.runtime import DockerRuntime, DockerRuntimeError, ProcessOutput
 
 _CAPSULE_DIRECTORY = Path(__file__).resolve().parent
@@ -41,9 +41,11 @@ class CapsuleBuilder:
         self,
         configuration: CapsuleConfiguration | None = None,
         runtime: CapsuleSetupRuntime | None = None,
+        image_lock_path: Path | None = None,
     ) -> None:
         self.configuration = configuration or CapsuleConfiguration.from_environment()
         self.runtime = runtime or DockerRuntime()
+        self.image_lock_path = image_lock_path or capsule_image_lock_path()
 
     def build(self) -> CapsuleBuildReport:
         """Build and verify the image, then ensure the internal network exists."""
@@ -65,18 +67,26 @@ class CapsuleBuilder:
             timeout_seconds=10.0,
             failure="built capsule image could not be inspected",
         ).stdout.decode(errors="replace").strip()
-        expected_id = self.configuration.image.rsplit("@", maxsplit=1)[1]
-        if image_id != expected_id:
-            raise DockerRuntimeError(
-                "built capsule image does not match the repository digest lock"
-            )
-
+        image = f"verisentinel-capsule@{image_id}"
+        CapsuleConfiguration(
+            image=image,
+            network=self.configuration.network,
+            user_id=self.configuration.user_id,
+            group_id=self.configuration.group_id,
+        )
         network_created = self._ensure_network()
+        self._activate_image(image)
         return CapsuleBuildReport(
-            image=self.configuration.image,
+            image=image,
             network=self.configuration.network,
             network_created=network_created,
         )
+
+    def _activate_image(self, image: str) -> None:
+        self.image_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.image_lock_path.with_suffix(".lock.tmp")
+        temporary.write_text(f"{image}\n", encoding="utf-8")
+        temporary.replace(self.image_lock_path)
 
     def _ensure_network(self) -> bool:
         inspected = self._run(

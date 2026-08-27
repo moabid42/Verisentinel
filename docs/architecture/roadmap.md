@@ -172,10 +172,11 @@ grant proposal, approval, or execution authority.
 ## Milestone 3: Local Execution Capsule
 
 Implementation completed on 2026-08-27. The optional capsule provider now uses
-the repository digest lock, a fixed typed-operation entrypoint, an internal
-Docker network, bounded resources and output, temporary read-only inputs, and
-guaranteed cleanup. Read-only readiness diagnostics and Docker integration tests
-cover the complete approved execution path against the private mock endpoint.
+an active immutable image digest initialized from the repository bootstrap lock,
+a fixed typed-operation entrypoint, an internal Docker network, bounded
+resources and output, temporary read-only inputs, and guaranteed cleanup.
+Read-only readiness diagnostics and Docker integration tests cover the complete
+approved execution path against the private mock endpoint.
 See the [Milestone 3 usage guide](../usage/milestone03.md) for manual checks and
 the reviewed measurement summary.
 

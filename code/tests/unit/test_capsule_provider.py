@@ -314,10 +314,25 @@ def test_interruption_removes_temporary_inputs_before_propagating(
 
 
 def test_configuration_rejects_unpinned_image_or_root_user() -> None:
-    with pytest.raises(ValueError, match="digest lock"):
+    with pytest.raises(ValueError, match="digest reference"):
         CapsuleConfiguration(image="verisentinel-capsule:latest")
     with pytest.raises(ValueError, match="non-root"):
         CapsuleConfiguration(image=IMAGE, user_id=0)
+
+
+def test_configuration_prefers_active_local_image_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    active_image = "verisentinel-capsule@sha256:" + "b" * 64
+    lock_path = tmp_path / "capsule" / "image.lock"
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text(active_image, encoding="utf-8")
+    monkeypatch.setenv("IAM_PLANNER_RUNTIME", str(tmp_path))
+
+    configuration = CapsuleConfiguration.from_environment()
+
+    assert configuration.image == active_image
 
 
 def _mount_source(value: str) -> Path:

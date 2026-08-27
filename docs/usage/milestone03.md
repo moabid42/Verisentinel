@@ -8,11 +8,13 @@ optional execution provider; the deterministic simulator remains the default.
 
 ### Fixed typed-operation image
 
-The repository now contains `execution/capsule/Dockerfile`, a fixed Python
-entrypoint, and `execution/capsule/image.lock`. The image:
+The repository contains `execution/capsule/Dockerfile`, a fixed Python
+entrypoint, and a bootstrap `execution/capsule/image.lock`. A local build writes
+its exact immutable image reference to the generated
+`runtime/capsule/image.lock`. The image:
 
-- uses a base image pinned by digest and is selected through the repository
-  digest lock;
+- uses a base image pinned by digest and is selected through the active digest
+  lock;
 - declares a non-root user, one fixed entrypoint, and no selectable command;
 - accepts only one strict `ExecutionSpec` and one credential file at fixed,
   read-only paths;
@@ -36,7 +38,7 @@ starts Docker without a shell or inherited standard input and applies:
 - 0.5 CPU, 128 MiB memory and swap, 32 processes, and a 16 MiB temporary
   filesystem;
 - the approved specification timeout and output limit; and
-- an image reference pinned by the repository digest lock with pulling disabled.
+- an image reference pinned by the active digest lock with pulling disabled.
 
 The provider always removes the named container and temporary input directory.
 Timeouts, output overflow, endpoint errors, malformed output, non-zero exit,
@@ -106,14 +108,16 @@ Build the image and create the internal network through the maintained CLI:
 ```
 
 The command builds without network access, base-image pulling, or provenance
-metadata. It fails if the result differs from the tracked digest lock or an
-existing network is not internal.
+metadata. It records the exact resulting image ID in the generated runtime lock
+and fails if an existing network is not internal. Docker build timestamps mean
+that separate valid local builds are not expected to reproduce one historical
+image ID.
 
-Verify that the result resolves through the tracked digest lock and has the
+Verify that the result resolves through the active runtime lock and has the
 fixed image configuration:
 
 ```bash
-capsule_image="$(tr -d '\n' < execution/capsule/image.lock)"
+capsule_image="$(tr -d '\n' < runtime/capsule/image.lock)"
 docker image inspect "$capsule_image" --format '{{.Id}}'
 docker image inspect "$capsule_image" \
   --format 'user={{.Config.User}} entrypoint={{json .Config.Entrypoint}} cmd={{json (index .Config "Cmd")}}'
@@ -121,7 +125,7 @@ docker image inspect "$capsule_image" \
 
 Expected results:
 
-- the image ID is the `sha256:` value in `image.lock`;
+- the image ID is the `sha256:` value in `runtime/capsule/image.lock`;
 - the declared user is `65532:65532`;
 - the entrypoint is
   `["/usr/local/bin/python","/opt/verisentinel/entrypoint.py"]`; and
@@ -335,7 +339,9 @@ do not generate or commit evaluation output as part of this milestone check.
 
 Before accepting a capsule change, confirm all of the following:
 
-- the configured image exactly matches `execution/capsule/image.lock`;
+- the configured image exactly matches the generated
+  `runtime/capsule/image.lock`, or the tracked bootstrap lock before a local
+  build;
 - the selected network is internal and the fixed mock is its only endpoint;
 - no command follows the image reference in provider-generated arguments;
 - neither the repository root nor `.env` is mounted into the capsule;

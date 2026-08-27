@@ -203,9 +203,9 @@ class CapsuleDoctor:
             name="image-digest",
             passed=passed,
             detail=(
-                "repository capsule image matches the digest lock"
+                "configured capsule image matches the active digest lock"
                 if passed
-                else "repository capsule image is absent or does not match its lock"
+                else "configured capsule image is absent or does not match its lock"
             ),
         )
 

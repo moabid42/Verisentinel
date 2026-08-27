@@ -21,8 +21,10 @@ verisentinel scenario validate PATH
 verisentinel auth inspect --credential-source SOURCE
 verisentinel corpus build
 verisentinel corpus status
+verisentinel sandbox build
 verisentinel sandbox doctor
 verisentinel run --scenario PATH --credential-source SOURCE
+verisentinel scenario run PATH --credential-source SOURCE
 ```
 
 The maintained runner and ingestion entrypoints no longer construct independent
@@ -42,7 +44,7 @@ exit codes. The application services own:
 - standalone scenario validation;
 - non-sensitive authentication inspection;
 - corpus build and current-status queries;
-- sandbox readiness inspection; and
+- sandbox build and readiness inspection; and
 - assembly of the existing interactive planner workflow.
 
 Scenario validation, credential resolution, corpus construction, deterministic
@@ -121,12 +123,14 @@ access unless explicitly stated.
 .venv/bin/verisentinel --help
 .venv/bin/verisentinel scenario --help
 .venv/bin/verisentinel scenario validate --help
+.venv/bin/verisentinel scenario run --help
 .venv/bin/verisentinel auth --help
 .venv/bin/verisentinel auth inspect --help
 .venv/bin/verisentinel corpus --help
 .venv/bin/verisentinel corpus build --help
 .venv/bin/verisentinel corpus status --help
 .venv/bin/verisentinel sandbox --help
+.venv/bin/verisentinel sandbox build --help
 .venv/bin/verisentinel sandbox doctor --help
 .venv/bin/verisentinel run --help
 ```
@@ -140,11 +144,8 @@ are visible; no command loads `.env` or attempts credential resolution.
 .venv/bin/verisentinel scenario validate scenario.example.yaml
 ```
 
-Expected output:
-
-```text
-Scenario is valid.
-```
+Expected result: a `SCENARIO VALID` panel containing the scenario name and
+target scope.
 
 The command must not build a corpus, load Gemini, create runtime records, prompt
 for a decision, or resolve credentials.
@@ -283,17 +284,16 @@ approved action still goes only to the deterministic simulator.
 1. Copy `scenario.example.yaml` to the ignored `scenario.yaml`.
 2. Set the scenario identity to the principal resolved by the credential source.
 3. Configure `GEMINI_API_KEY` in the ignored `.env` file.
-4. Start the unified `run` command:
+4. Start the scenario from the terminal launchpad:
 
 ```bash
-.venv/bin/verisentinel run \
-  --scenario=scenario.yaml \
+.venv/bin/verisentinel scenario run scenario.yaml \
   --credential-source=adc
 ```
 
 Expected behavior is unchanged from Milestone 1:
 
-- the command reports `Execution provider: simulator`;
+- the active run panel reports `Provider  simulator`;
 - Gemini can rank only cataloged techniques;
 - deterministic validation controls which candidates are displayed;
 - no more than three candidates are displayed;

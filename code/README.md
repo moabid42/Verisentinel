@@ -42,6 +42,7 @@ flowchart LR
         Proposer["Gemini Technique Proposer<br/>structured catalog-only ranking"]
         Validator["Boolean Validator<br/>bitset plus Z3 equivalence check"]
         Launchpad["Operator Launchpad<br/>up to three candidate cards"]
+        Terminal["Terminal UI<br/>review and explicit input"]
         Execution["Guarded Execution<br/>provider boundary and simulator"]
         Runtime["Versioned runtime JSON<br/>states, decisions, approvals, results"]
 
@@ -49,6 +50,8 @@ flowchart LR
         Green --> Proposer
         Green --> Validator
         Green -->|publish candidates| Launchpad
+        Green -->|review queue| Terminal
+        Terminal -->|record decision| Launchpad
         Launchpad -->|operator decision| Green
         Green -->|exact approval and request| Execution
         Execution -->|observation| Environment
@@ -67,8 +70,8 @@ flowchart LR
     Snapshot --> Proposer
     Snapshot --> Validator
     Snapshot --> Execution
-    Operator([Human operator]) --> Launchpad
-    Launchpad --> Operator
+    Operator([Human operator]) --> Terminal
+    Terminal --> Operator
 ```
 
 The approval and execution path is deliberately separate from proposal generation:
@@ -80,7 +83,8 @@ sequenceDiagram
     participant Env as Environment Brain
     participant Prop as Proposer
     participant Val as Validator
-    participant UI as Launchpad
+    participant Store as Launchpad
+    participant UI as Terminal UI
     participant Exec as Execution Service
 
     Operator->>Green: Create engagement
@@ -91,10 +95,12 @@ sequenceDiagram
     Prop-->>Green: Ranked proposals
     Green->>Val: Check feasibility and coverage
     Val-->>Green: Admissible candidates only
-    Green->>UI: Publish at most three cards
+    Green->>Store: Publish at most three cards
+    Green->>UI: Return validated review queue
     UI-->>Operator: Show evidence and alternatives
     Operator->>UI: Approve one explicit candidate
-    UI->>Green: Version-bound decision
+    UI->>Store: Record version-bound decision
+    UI->>Green: Submit version-bound decision
     Green->>Val: Validate candidate again
     Green->>Exec: Register exact one-time approval
     Green->>Exec: Execute approved request
@@ -113,7 +119,7 @@ code/
 ├── validator/     Bitset and Z3-equivalent Boolean validation
 ├── proposer/      Candidate retrieval and required Gemini structured ranking
 ├── green_agent/   Engagement lifecycle and orchestration
-├── launchpad/     Human review API and HTML dashboard
+├── launchpad/     Human review records and decision service
 ├── execution/     Approval, typed actions, credential leases, providers, and attempts
 ├── runner/        Unified Typer CLI, application services, scenario loader, and terminal UI
 ├── tests/         Main planner unit tests
@@ -163,8 +169,9 @@ verisentinel scenario validate PATH
 verisentinel auth inspect --credential-source SOURCE
 verisentinel corpus build
 verisentinel corpus status
+verisentinel sandbox build
 verisentinel sandbox doctor
-verisentinel run --scenario PATH --credential-source SOURCE
+verisentinel scenario run PATH --credential-source SOURCE
 ```
 
 Run `.venv/bin/verisentinel --help` or nested `--help` commands for the
@@ -207,7 +214,7 @@ jq '{
 
 The builder defaults to strict mode and refuses to publish data-consistency
 errors. A scenario-specific source or detection profile is built when
-`verisentinel run` receives `--rebuild-snapshot`.
+`verisentinel scenario run` receives `--rebuild-snapshot`.
 
 ## 2. Configure Gemini and the scenario
 
@@ -278,15 +285,14 @@ not expose credential material to its deterministic action implementation.
 From `code/`:
 
 ```bash
-.venv/bin/verisentinel run --scenario=scenario.yaml --credential-source=adc
+.venv/bin/verisentinel scenario run scenario.yaml --credential-source=adc
 ```
 
 The runner reuses the current matrix and builds one automatically when none exists. To deliberately
 rebuild it first:
 
 ```bash
-.venv/bin/verisentinel run \
-  --scenario=scenario.yaml \
+.venv/bin/verisentinel scenario run scenario.yaml \
   --credential-source=adc \
   --rebuild-snapshot
 ```
@@ -380,7 +386,7 @@ Every service can be started with Uvicorn when direct API testing is useful:
 | Validator | `http://validator:8003` | `validator.api:app` | state/candidate validation |
 | Proposer | `http://proposer:8004` | `proposer.api:app` | known-technique proposals |
 | Green agent | `http://green-agent:8005` | `green_agent.api:app` | engagement lifecycle |
-| Launchpad | `http://launchpad:8006` | `launchpad.api:app` | operator dashboard and decisions |
+| Launchpad | `http://launchpad:8006` | `launchpad.api:app` | candidate and decision records |
 | Execution | `http://execution:8007` | `execution.api:app` | guarded provider boundary |
 
 There is no main-project Docker Compose file or all-services launcher. These APIs are not used by
@@ -534,7 +540,7 @@ latest `runtime/traces/*.jsonl` file for request start, timeout, retry, response
 ## Security notes
 
 - Bind the prototype to localhost or place it behind real authentication and TLS.
-- The launchpad dashboard and decision endpoint do not implement user login, RBAC, or CSRF defense.
+- The launchpad decision endpoint does not implement operator login or RBAC.
 - Ingestion, environment, validator, and proposer APIs are not authenticated.
 - `code/.env` and `code/scenario.yaml` are ignored; never force-add them to Git.
 - The direct runner passes only a source descriptor and opaque reference to the

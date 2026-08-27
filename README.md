@@ -62,7 +62,7 @@ Verisentinel/
 │   ├── validator/         Boolean validation — bitset engine cross-checked against Z3 (SMT)
 │   ├── proposer/          Gemini structured ranking, restricted to cataloged techniques only
 │   ├── green_agent/       Engagement lifecycle + orchestration state machine
-│   ├── launchpad/         Human-review API and dashboard (publishes ≤ 3 candidate cards)
+│   ├── launchpad/         Human-review records and decision service (≤ 3 candidate cards)
 │   ├── execution/         Approval, credential leasing, provider dispatch, and attempt records
 │   ├── runner/            Typer CLI, application services, scenario loader, and terminal launchpad
 │   ├── evaluation-pipeline/  Offline proposer+validator harness with ground-truth scenario solutions
@@ -92,6 +92,7 @@ flowchart TD
         Proposer["proposer<br/>Gemini ranks cataloged techniques"]
         Validator["validator<br/>bitset + Z3: feasibility &amp; coverage"]
         Launchpad["launchpad<br/>publishes &le; 3 candidates"]
+        Terminal["runner<br/>terminal review"]
         Execution["execution<br/>approval-gated simulator"]
         Environment["environment<br/>versioned state"]
 
@@ -100,13 +101,15 @@ flowchart TD
         Green -->|check each| Validator
         Validator -->|admissible only| Green
         Green -->|publish| Launchpad
+        Green -->|review queue| Terminal
+        Terminal -->|record choice| Launchpad
         Green -->|re-validate + run| Execution
         Execution -->|observation| Environment
         Environment -->|next state version| Green
     end
 
-    Launchpad -->|"&le; 3 cards"| Operator(["Human operator"])
-    Operator -->|approve one| Launchpad
+    Terminal -->|"&le; 3 cards"| Operator(["Human operator"])
+    Operator -->|explicit choice| Terminal
     Launchpad -->|decision| Green
 ```
 
@@ -115,7 +118,8 @@ flowchart TD
 - **validator** decides feasibility and coverage deterministically, and returns the exact missing
   permissions and intersecting detection rows. The bitset result is cross-checked against Z3.
 - **green_agent** runs the cycle and holds exclusive authority over what gets published.
-- **launchpad** shows the operator at most three admissible candidates and records the explicit choice.
+- **runner** presents at most three admissible candidates in the terminal; **launchpad** records the
+  explicit choice.
 - **execution** re-validates the approved action, atomically consumes its
   approval, resolves a short-lived credential lease, and dispatches through the
   provider boundary. The deterministic simulator is the default; the optional
@@ -153,7 +157,7 @@ cp scenario.example.yaml scenario.yaml     # then describe your authorized start
 **4. Run the human-gated loop:**
 
 ```bash
-.venv/bin/verisentinel run --scenario=scenario.yaml --credential-source=adc
+.venv/bin/verisentinel scenario run scenario.yaml --credential-source=adc
 ```
 
 Gemini ranks cataloged techniques, the validator filters them, and the terminal launchpad shows up
@@ -183,6 +187,6 @@ evaluation pipeline, IAMouflage rebuilds, security notes, and troubleshooting �
 
 ## Security
 
-This is a research prototype. The HTTP APIs and launchpad dashboard have no authentication, RBAC, or
-CSRF protection — bind to localhost or place behind real auth and TLS. Use only against systems you
-are explicitly authorized to test.
+This is a research prototype. The HTTP APIs are not a production authentication boundary; bind
+them to localhost or place them behind real authentication and TLS. Operator review is performed
+in the CLI. Use only against systems you are explicitly authorized to test.

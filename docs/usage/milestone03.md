@@ -97,18 +97,17 @@ digest once:
 docker pull 'python@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7'
 ```
 
-## Build and inspect the locked image
+## Build the locked sandbox
 
-Build without network access, base-image pulling, or provenance metadata:
+Build the image and create the internal network through the maintained CLI:
 
 ```bash
-docker build \
-  --network=none \
-  --pull=false \
-  --provenance=false \
-  --tag verisentinel-capsule:milestone03 \
-  execution/capsule
+.venv/bin/verisentinel sandbox build
 ```
+
+The command builds without network access, base-image pulling, or provenance
+metadata. It fails if the result differs from the tracked digest lock or an
+existing network is not internal.
 
 Verify that the result resolves through the tracked digest lock and has the
 fixed image configuration:
@@ -128,20 +127,18 @@ Expected results:
   `["/usr/local/bin/python","/opt/verisentinel/entrypoint.py"]`; and
 - the command is empty.
 
-## Create the private network and run the doctor
+## Run the doctor
 
-Create the capsule's default internal network:
+Inspect the resources prepared by `sandbox build`:
 
 ```bash
-docker network inspect verisentinel-capsule >/dev/null 2>&1 || \
-  docker network create --internal verisentinel-capsule
 docker network inspect verisentinel-capsule \
   --format 'internal={{.Internal}} driver={{.Driver}}'
 .venv/bin/verisentinel sandbox doctor
 ```
 
 Expected result: the network prints `internal=true`; the doctor prints
-`Provider: capsule`, `Status: available`, and `pass` for all of these checks:
+`SANDBOX READY`, `Provider  capsule`, and `PASS` for all of these checks:
 
 ```text
 runtime

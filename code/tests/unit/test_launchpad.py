@@ -9,12 +9,10 @@ from core.models import (
     DecisionKind,
     OperatorDecision,
     Proposal,
-    StateValidationResult,
 )
 from launchpad.models import CandidateSet
 from launchpad.repository import LaunchpadRepository
 from launchpad.service import LaunchpadService
-from launchpad.ui import render_dashboard
 
 
 def card(candidate_id: str, rank: int = 1) -> CandidateCard:
@@ -92,39 +90,3 @@ def test_launchpad_approval_must_select_a_displayed_candidate(tmp_path: Path) ->
                 operator="operator@example.test",
             )
         )
-
-
-def test_dashboard_displays_state_and_candidate_evidence() -> None:
-    displayed_card = card("candidate-1").model_copy(
-        update={
-            "technique_title": "Test technique",
-            "expected_capabilities": ("test-capability",),
-            "validation": card("candidate-1").validation.model_copy(
-                update={"uncovered_permissions": ("test.permission",)}
-            ),
-        }
-    )
-    candidates = candidate_set(displayed_card).model_copy(
-        update={
-            "identity": "identity",
-            "scope": "projects/sandbox",
-            "state_analysis": StateValidationResult(
-                result_id="state-validation",
-                state_version="state",
-                matrix_version="matrix",
-                monitored_permission_indices=(0,),
-                unmonitored_permission_indices=(1, 2),
-                monitored_permissions=("monitored.permission",),
-                unmonitored_permissions=("unmonitored.one", "unmonitored.two"),
-                has_gap=True,
-            ),
-        }
-    )
-
-    dashboard = render_dashboard(candidates)
-
-    assert "3</strong> available permissions" in dashboard
-    assert "Test technique" in dashboard
-    assert "test-capability" in dashboard
-    assert "test.permission" in dashboard
-    assert "/execute" not in dashboard

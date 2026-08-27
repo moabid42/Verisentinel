@@ -41,6 +41,8 @@ class TerminalUI:
 
     def __init__(self, console: Console | None = None) -> None:
         self.console = console or Console(theme=_THEME, highlight=False)
+        if console is not None:
+            self.console.push_theme(_THEME)
 
     @classmethod
     def errors(cls) -> TerminalUI:

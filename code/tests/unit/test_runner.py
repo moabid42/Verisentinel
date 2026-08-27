@@ -1,8 +1,10 @@
 import json
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 import runner.cli as cli_module
@@ -19,7 +21,7 @@ from execution.credentials import CredentialInspection, CredentialSourceKind
 from runner.application import CorpusStatus, PlannerRunRequest
 from runner.cli import app, main
 from runner.scenario import ScenarioError, load_scenario
-from runner.terminal import parse_choice
+from runner.terminal import TerminalUI, parse_choice
 
 TEST_SECRET = "synthetic-sensitive-value-for-redaction"
 CLI = CliRunner()
@@ -452,3 +454,34 @@ def test_terminal_choice_never_defaults_to_an_approval() -> None:
     assert parse_choice("q", candidates).decision == DecisionKind.TERMINATE
     with pytest.raises(ValueError):
         parse_choice("", candidates)
+
+
+def test_terminal_review_displays_candidate_evidence() -> None:
+    stream = StringIO()
+    displayed = candidate().model_copy(
+        update={
+            "technique_title": "Test technique",
+            "expected_capabilities": ("test-capability",),
+            "validation": candidate().validation.model_copy(
+                update={
+                    "covered_permissions": ("covered.permission",),
+                    "uncovered_permissions": ("test.permission",),
+                    "matching_detection_ids": ("detection-id",),
+                }
+            ),
+        }
+    )
+    terminal = TerminalUI(
+        Console(file=stream, color_system=None, highlight=False, width=100)
+    )
+
+    terminal.candidates((displayed,))
+
+    rendered = stream.getvalue()
+    assert "APPROVAL REQUIRED" in rendered
+    assert "Test technique" in rendered
+    assert "test-capability" in rendered
+    assert "covered.permission" in rendered
+    assert "test.permission" in rendered
+    assert "detection-id" in rendered
+    assert "/execute" not in rendered

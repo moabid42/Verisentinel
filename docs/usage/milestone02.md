@@ -3,9 +3,11 @@
 This guide explains what Milestone 2 implemented and how to test it manually.
 Run application commands from `code/` unless a section says otherwise.
 
-Milestone 2 changes the command boundary, not the planner's authority model. The
-direct workflow remains human-gated, and the deterministic simulator remains the
-only built-in execution provider.
+Milestone 2 changed the command boundary, not the planner's authority model. At
+that milestone boundary, the deterministic simulator was the only built-in
+execution provider. The direct workflow remains human-gated; Milestone 3 has
+since added the optional local capsule described in
+[`milestone03.md`](milestone03.md).
 
 ## What was implemented
 
@@ -84,8 +86,9 @@ maximum before rendering. Unexpected exception messages are not printed. Help
 text contains only static command descriptions and never reads `.env`, a
 scenario, a credential source, or local runtime state.
 
-`sandbox doctor` currently reports the capsule provider as unavailable and the
-simulator as remaining available. This is the expected result until Milestone 3.
+At the Milestone 2 boundary, `sandbox doctor` reported that the capsule was not
+installed. It now performs the readiness checks documented in the Milestone 3
+guide.
 
 ## Setup
 
@@ -244,16 +247,14 @@ Expected result: help for `verisentinel corpus build`, not an `argparse` parser.
 .venv/bin/verisentinel sandbox doctor
 ```
 
-Expected output for Milestone 2:
+The command now prints one result for each required isolation capability. Before
+the locked image and internal network are installed, expect `Status: unavailable`
+and one or more failed checks. After Milestone 3 setup, expect `Status: available`
+and every check to pass. See [`milestone03.md`](milestone03.md) for the exact
+setup and review criteria.
 
-```text
-Provider: capsule
-Status: unavailable
-Detail: Local execution capsule is not installed; the simulator remains available.
-```
-
-This diagnostic is read-only and exits with `0`. An unavailable capsule is an
-expected reported state, not a command failure, until Milestone 3 implements it.
+This diagnostic remains read-only and exits with `0`; readiness is reported in
+the content rather than as a command failure.
 
 ### 7. Verify required-input exit codes
 
@@ -352,7 +353,7 @@ After any CLI change, verify all of the following:
 - interrupt exit `130` never records a decision or implies approval; and
 - generated `artifacts/` and `runtime/` files remain unstaged.
 
-## Not implemented in Milestone 2
+## Not implemented at the Milestone 2 boundary
 
 Milestone 2 does not add:
 
@@ -363,5 +364,5 @@ Milestone 2 does not add:
 - a managed execution runtime; or
 - an alternate authorization or approval path.
 
-Those items remain governed by Milestones 3 through 5 in the architecture
-roadmap.
+The local capsule was subsequently delivered in Milestone 3. The remaining
+items are governed by Milestones 4 and 5 in the architecture roadmap.

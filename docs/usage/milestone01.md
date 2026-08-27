@@ -389,9 +389,10 @@ Before accepting a manual test run, confirm all of the following:
 - provider errors returned to the caller are neutral and bounded;
 - provider output cannot change the approved identity, action, or target;
 - runtime JSON and traces contain no credential material; and
-- the simulator remains the only built-in provider.
+- at the Milestone 1 boundary, the simulator remained the only built-in
+  provider; the optional local capsule was later added in Milestone 3.
 
-## Intentionally not implemented
+## Intentionally not implemented at the Milestone 1 boundary
 
 Milestone 1 does not include:
 
@@ -404,6 +405,10 @@ Milestone 1 does not include:
 
 Unknown provider configuration continues to fail closed. Do not interpret the
 provider protocol as evidence that a live provider is available.
+
+The local mock-only capsule has since been implemented. See
+[`milestone03.md`](milestone03.md) for its boundaries and manual tests. Live
+cloud execution remains unavailable.
 
 ## Milestone commits
 

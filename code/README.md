@@ -133,7 +133,8 @@ code/
   `IAMOUFLAGE_DATA_PATH` pointing to their directory
 - A Gemini API key
 - `jq` for the shell examples below
-- Docker only when rebuilding the IAMouflage Neo4j graph
+- Docker when rebuilding the IAMouflage Neo4j graph or testing the optional
+  local execution capsule
 
 From the repository root, initialize the submodule if necessary:
 
@@ -169,7 +170,8 @@ verisentinel run --scenario PATH --credential-source SOURCE
 Run `.venv/bin/verisentinel --help` or nested `--help` commands for the
 complete option descriptions. See
 [`../docs/usage/milestone02.md`](../docs/usage/milestone02.md) for manual tests,
-exit codes, and security checks.
+exit codes, and security checks. Capsule setup and isolation checks are in the
+[`Milestone 3 guide`](../docs/usage/milestone03.md).
 
 ## 1. Build a matrix snapshot
 
@@ -397,8 +399,9 @@ the current direct runner.
 | `LAUNCHPAD_URL` | local in-process service when unset in green agent | candidate publication gateway |
 | `GREEN_AGENT_URL` | no decision forwarding when unset in launchpad | decision sink |
 | `EXECUTION_URL` | local in-process simulator when unset in green agent | execution gateway |
-| `EXECUTION_PROVIDER` | `simulator` | built-in provider selection; unknown values fail assembly |
-| `EXECUTION_ENABLED` | `true` for simulator | execution kill switch |
+| `EXECUTION_PROVIDER` | `simulator` | `simulator` or readiness-gated `capsule`; unknown values fail assembly |
+| `EXECUTION_ENABLED` | `true` for simulator | execution kill switch; defaults to disabled for other providers |
+| `VERISENTINEL_CAPSULE_NETWORK` | `verisentinel-capsule` | internal Docker network used by the capsule and fixed mock endpoint |
 | `VALIDATOR_ENGINE` | `bitset` | `bitset` or `smt` result engine |
 | `VALIDATOR_VERIFY_SMT` | `true` | compare bitset result with Z3 |
 | `GEMINI_API_KEY` | required for proposals | Gemini API key loaded from `.env` |
@@ -539,7 +542,8 @@ latest `runtime/traces/*.jsonl` file for request start, timeout, retry, response
   before one provider call, and the short-lived lease clears its material on
   every exit path.
 - SHA-256 versions and digests provide integrity binding, not encryption.
-- Keep `EXECUTION_PROVIDER=simulator`; no real GCP provider is implemented.
+- Keep `EXECUTION_PROVIDER=simulator` for normal local planning. The capsule is
+  limited to its private mock endpoint and is not a live GCP provider.
 - The control token is an internal shared secret, not a complete production identity system.
 
 ## Current limitations

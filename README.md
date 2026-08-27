@@ -118,7 +118,8 @@ flowchart TD
 - **launchpad** shows the operator at most three admissible candidates and records the explicit choice.
 - **execution** re-validates the approved action, atomically consumes its
   approval, resolves a short-lived credential lease, and dispatches through the
-  provider boundary. The deterministic simulator is the only built-in provider.
+  provider boundary. The deterministic simulator is the default; the optional
+  local capsule is restricted to a private mock endpoint.
 - **environment** applies the resulting observation to produce the next immutable state version.
 
 ---
@@ -176,7 +177,9 @@ evaluation pipeline, IAMouflage rebuilds, security notes, and troubleshooting â€
 - Secrets live in `code/.env` (gitignored). Never force-add it.
 - The IAM dataset and IAMouflage export paths default to the submodule locations above, and can be
   overridden with `IAM_DATASET_PATH` and `IAMOUFLAGE_DATA_PATH`.
-- Keep `EXECUTION_PROVIDER=simulator`; no real GCP execution provider is implemented.
+- Keep `EXECUTION_PROVIDER=simulator` for the default workflow. The optional
+  `capsule` provider executes only against its private mock endpoint; no live
+  GCP execution provider is implemented.
 
 ## Security
 

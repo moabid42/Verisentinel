@@ -46,7 +46,7 @@ _APP_SETTINGS = {
 
 app = typer.Typer(
     name="verisentinel",
-    help="Authorization analysis, coverage validation, and controlled simulation.",
+    help="Authorization analysis, coverage validation, and controlled execution.",
     no_args_is_help=False,
     **_APP_SETTINGS,
 )
@@ -418,7 +418,7 @@ def run_command(
         ),
     ] = False,
 ) -> None:
-    """Run the direct human-gated planner with the simulator default."""
+    """Run the direct human-gated planner through the connected sandbox."""
     _run_scenario(
         scenario,
         credential_source,

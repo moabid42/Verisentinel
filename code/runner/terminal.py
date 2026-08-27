@@ -78,7 +78,7 @@ class TerminalUI:
                         style="accent",
                     ),
                     Text(
-                        "Authorization analysis · coverage validation · controlled simulation",
+                        "Authorization analysis · coverage validation · controlled execution",
                         style="muted",
                     ),
                     Text(""),

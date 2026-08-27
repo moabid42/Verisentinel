@@ -672,6 +672,22 @@ def test_runner_rejects_raw_credential_argument_without_echoing_it(
     assert TEST_SECRET not in capsys.readouterr().err
 
 
+def test_sandbox_connect_rejects_positional_token_without_echoing_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+
+    result = CLI.invoke(
+        app,
+        ["sandbox", "connect", TEST_SECRET, "--scenario", str(path)],
+    )
+
+    assert result.exit_code == 2
+    assert "only with the --dev option" in result.output
+    assert TEST_SECRET not in result.output
+
+
 def test_debug_trace_redacts_named_and_embedded_secrets(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
     trace = DebugTrace(path, "run", secrets=(TEST_SECRET,), echo=False)

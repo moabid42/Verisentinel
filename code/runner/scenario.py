@@ -17,6 +17,8 @@ class ScenarioError(ValueError):
 _SERVICE_ACCOUNT_PATTERN = re.compile(
     r"^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$"
 )
+_PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+_BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$")
 
 
 class InfrastructureTarget(ImmutableModel):
@@ -29,10 +31,14 @@ class InfrastructureTarget(ImmutableModel):
     def path_is_canonical(cls, value: str) -> str:
         normalized = value.strip().rstrip("/")
         parts = normalized.split("/")
-        if not normalized.startswith("projects/"):
-            raise ValueError("path must start with projects/")
-        if "//" in normalized or any(part in {".", ".."} for part in parts):
-            raise ValueError("path must be a canonical GCP resource name")
+        if (
+            len(parts) != 4
+            or parts[0] != "projects"
+            or parts[2] != "buckets"
+            or _PROJECT_PATTERN.fullmatch(parts[1]) is None
+            or _BUCKET_PATTERN.fullmatch(parts[3]) is None
+        ):
+            raise ValueError("path must be projects/PROJECT/buckets/BUCKET")
         return normalized
 
 

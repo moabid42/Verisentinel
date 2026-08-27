@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +26,8 @@ _REQUEST_KEYS = {
     "parameters",
     "target",
 }
+_PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+_BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$")
 
 
 class GatewayError(RuntimeError):
@@ -144,7 +147,13 @@ class Handler(BaseHTTPRequestHandler):
 
 def _bucket(path: str) -> str:
     parts = path.split("/")
-    if len(parts) != 4 or parts[0] != "projects" or parts[2] != "buckets":
+    if (
+        len(parts) != 4
+        or parts[0] != "projects"
+        or parts[2] != "buckets"
+        or _PROJECT_PATTERN.fullmatch(parts[1]) is None
+        or _BUCKET_PATTERN.fullmatch(parts[3]) is None
+    ):
         raise GatewayError("configuration invalid")
     return parts[3]
 

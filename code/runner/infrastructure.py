@@ -17,6 +17,8 @@ from execution.credentials import CredentialResolver, CredentialSource
 from runner.scenario import PlannerScenario
 
 _INFRASTRUCTURE_ID_PATTERN = re.compile(r"^infra_[0-9a-f]{32}$")
+_PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+_BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$")
 _STORAGE_API = "https://storage.googleapis.com/storage/v1"
 
 
@@ -97,6 +99,11 @@ class GcpInfrastructureProvider:
             headers=headers,
             operation="read the development bucket policy",
         ).json()
+        if not isinstance(policy, dict) or not isinstance(
+            policy.get("bindings", []),
+            list,
+        ):
+            raise InfrastructureError("GCP returned an invalid bucket policy")
         bindings = list(policy.get("bindings", []))
         bindings.append(
             {
@@ -206,7 +213,13 @@ class InfrastructureService:
 
 def _parse_bucket_path(path: str) -> tuple[str, str]:
     parts = path.split("/")
-    if len(parts) != 4 or parts[0] != "projects" or parts[2] != "buckets":
+    if (
+        len(parts) != 4
+        or parts[0] != "projects"
+        or parts[2] != "buckets"
+        or _PROJECT_PATTERN.fullmatch(parts[1]) is None
+        or _BUCKET_PATTERN.fullmatch(parts[3]) is None
+    ):
         raise InfrastructureError(
             "development infrastructure path must be projects/PROJECT/buckets/BUCKET"
         )

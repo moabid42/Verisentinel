@@ -3,6 +3,7 @@
 from io import StringIO
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
 from runner.session import ShellSessionRepository, ShellSessionStatus
@@ -114,6 +115,27 @@ def test_shell_recovers_from_unmatched_quote(tmp_path: Path) -> None:
     shell.run()
 
     assert "unmatched quote" in stream.getvalue()
+
+
+def test_shell_marks_session_interrupted_after_unexpected_failure(
+    tmp_path: Path,
+) -> None:
+    def fail(arguments: list[str]) -> int:
+        del arguments
+        raise RuntimeError("failure")
+
+    repository = ShellSessionRepository(tmp_path)
+    shell = InteractiveShell(
+        repository=repository,
+        executor=fail,
+        terminal=terminal(StringIO()),
+        reader=ScriptedReader("corpus status"),
+    )
+
+    with pytest.raises(RuntimeError, match="failure"):
+        shell.run()
+
+    assert repository.list()[0].status == ShellSessionStatus.INTERRUPTED
 
 
 def test_shell_normalizes_optional_program_name() -> None:

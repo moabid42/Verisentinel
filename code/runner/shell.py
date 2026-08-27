@@ -57,6 +57,9 @@ class InteractiveShell:
                 session = self.repository.close(session)
                 self.terminal.shell_closed(session)
                 return 0
+            except Exception:
+                self.repository.close(session, interrupted=True)
+                raise
 
             stripped = raw.strip()
             if not stripped:
@@ -84,7 +87,14 @@ class InteractiveShell:
                 )
                 continue
 
-            exit_code = self.executor(arguments)
+            try:
+                exit_code = self.executor(arguments)
+            except KeyboardInterrupt:
+                exit_code = 130
+                self.terminal.shell_interrupted()
+            except Exception:
+                self.repository.close(session, interrupted=True)
+                raise
             session = self.repository.record(
                 session,
                 operation=_operation_name(arguments),

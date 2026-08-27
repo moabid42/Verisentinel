@@ -8,7 +8,8 @@ from typing import Annotated
 
 import typer
 
-from core.errors import AuthorizationError, PlannerError
+from core.config import Paths
+from core.errors import AuthorizationError, NotFoundError, PlannerError
 from execution.credentials import CredentialSourceError, parse_credential_source
 from runner.application import (
     CorpusStatus,
@@ -23,6 +24,7 @@ from runner.application import (
     validate_scenario,
 )
 from runner.scenario import ScenarioError
+from runner.session import ShellSessionRepository
 from runner.terminal import TerminalUI
 
 _OUTPUT_LIMIT = 512
@@ -52,11 +54,17 @@ corpus_app = typer.Typer(
 sandbox_app = typer.Typer(
     help="Build and verify controlled execution.", no_args_is_help=True, **_APP_SETTINGS
 )
+session_app = typer.Typer(
+    help="Inspect interactive terminal sessions.",
+    no_args_is_help=True,
+    **_APP_SETTINGS,
+)
 
 app.add_typer(scenario_app, name="scenario")
 app.add_typer(auth_app, name="auth")
 app.add_typer(corpus_app, name="corpus")
 app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(session_app, name="session")
 
 
 @app.callback(invoke_without_command=True)
@@ -171,6 +179,25 @@ def sandbox_build() -> None:
     """Build the locked capsule image and prepare its private network."""
     report = _invoke(build_sandbox)
     TerminalUI().sandbox_build(report)
+
+
+@session_app.command("list")
+def session_list() -> None:
+    """List persisted interactive terminal sessions."""
+    sessions = _invoke(_session_repository().list)
+    TerminalUI().sessions(sessions)
+
+
+@session_app.command("show")
+def session_show(
+    session_id: Annotated[str, typer.Argument(help="Opaque terminal session ID.")],
+) -> None:
+    """Show sanitized history for one terminal session."""
+    session = _invoke(
+        lambda: _session_repository().get(session_id),
+        input_errors=(NotFoundError, ValueError),
+    )
+    TerminalUI().session(session)
 
 
 @app.command("run")
@@ -291,6 +318,10 @@ def _render_corpus(status: CorpusStatus) -> None:
         detection_count=status.detection_count,
         technique_count=status.technique_count,
     )
+
+
+def _session_repository() -> ShellSessionRepository:
+    return ShellSessionRepository(Paths().runtime / "shell" / "sessions")
 
 
 def _bounded(value: str) -> str:

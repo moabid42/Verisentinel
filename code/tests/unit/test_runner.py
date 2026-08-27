@@ -21,6 +21,7 @@ from execution.credentials import CredentialInspection, CredentialSourceKind
 from runner.application import CorpusStatus, PlannerRunRequest
 from runner.cli import app, main
 from runner.scenario import ScenarioError, load_scenario
+from runner.session import ShellSessionRepository
 from runner.terminal import TerminalUI, parse_choice
 
 TEST_SECRET = "synthetic-sensitive-value-for-redaction"
@@ -156,6 +157,9 @@ def test_top_level_and_nested_help_are_stable(
         ("sandbox", "--help"),
         ("sandbox", "build", "--help"),
         ("sandbox", "doctor", "--help"),
+        ("session", "--help"),
+        ("session", "list", "--help"),
+        ("session", "show", "--help"),
         ("run", "--help"),
     )
     results = tuple(CLI.invoke(app, list(route)) for route in routes)
@@ -166,6 +170,7 @@ def test_top_level_and_nested_help_are_stable(
     assert "auth" in top_level.stdout
     assert "corpus" in top_level.stdout
     assert "sandbox" in top_level.stdout
+    assert "session" in top_level.stdout
     assert "run" in top_level.stdout
     assert ".env" not in top_level.stdout
     assert "validate" in results[1].stdout
@@ -316,6 +321,34 @@ def test_sandbox_build_reports_prepared_resources(
     assert "SANDBOX  BUILT" in result.stdout
     assert "Network state" in result.stdout
     assert "created" in result.stdout
+
+
+def test_session_routes_render_persisted_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("IAM_PLANNER_RUNTIME", str(tmp_path))
+    repository = ShellSessionRepository(tmp_path / "shell" / "sessions")
+    session = repository.record(
+        repository.create(),
+        operation="corpus status",
+        exit_code=0,
+    )
+
+    listed = CLI.invoke(app, ["session", "list"])
+    shown = CLI.invoke(app, ["session", "show", session.session_id])
+
+    assert listed.exit_code == 0
+    assert session.session_id in listed.stdout
+    assert shown.exit_code == 0
+    assert "corpus status" in shown.stdout
+
+
+def test_session_show_rejects_invalid_identifier() -> None:
+    result = CLI.invoke(app, ["session", "show", "../current"])
+
+    assert result.exit_code == 2
+    assert "INPUT ERROR" in result.output
 
 
 def test_run_routes_validated_input_to_application_service(

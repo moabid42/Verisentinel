@@ -14,6 +14,7 @@ from rich.theme import Theme
 from core.models import CandidateCard, DecisionKind
 from execution.capsule.doctor import CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
+from runner.session import ShellSession
 
 _THEME = Theme(
     {
@@ -178,6 +179,64 @@ class TerminalUI:
                     table,
                 ),
                 border_style="green" if report.available else "yellow",
+                padding=(1, 1),
+            )
+        )
+
+    def sessions(self, sessions: tuple[ShellSession, ...]) -> None:
+        """Render persisted terminal sessions in recency order."""
+        if not sessions:
+            self._key_values(
+                "SESSIONS",
+                (("Next", "Run verisentinel shell"),),
+                state="EMPTY",
+                state_style="muted",
+            )
+            return
+        table = Table.grid(expand=True, padding=(0, 0, 1, 0))
+        table.add_column()
+        for session in sessions:
+            identifier = Text(session.session_id, style="accent")
+            metadata = Text(
+                f"{session.status.value} · {session.command_count} commands · "
+                f"{session.updated_at.isoformat(timespec='seconds')}",
+                style="muted",
+            )
+            table.add_row(Group(identifier, metadata))
+        self.console.print(
+            Panel(
+                table,
+                title="[accent]SESSIONS[/accent]",
+                title_align="left",
+                border_style="cyan",
+                padding=(1, 1),
+            )
+        )
+
+    def session(self, session: ShellSession) -> None:
+        """Render one terminal session and its sanitized command outcomes."""
+        details = Table.grid(padding=(0, 2))
+        details.add_column(style="label", no_wrap=True)
+        details.add_column()
+        details.add_row("Session", session.session_id)
+        details.add_row("Status", session.status.value)
+        details.add_row("Created", session.created_at.isoformat(timespec="seconds"))
+        details.add_row("Updated", session.updated_at.isoformat(timespec="seconds"))
+        details.add_row("Commands", str(session.command_count))
+
+        history = Table(box=None, expand=True, padding=(0, 1))
+        history.add_column("#", style="muted", justify="right", width=4)
+        history.add_column("OPERATION")
+        history.add_column("EXIT", justify="right", width=4)
+        for event in session.events:
+            history.add_row(str(event.sequence), event.operation, str(event.exit_code))
+        body = Group(details, Text(""), history) if session.events else details
+        self.console.print(
+            Panel(
+                body,
+                title="[accent]SESSION[/accent]",
+                title_align="left",
+                border_style="cyan",
                 padding=(1, 1),
             )
         )

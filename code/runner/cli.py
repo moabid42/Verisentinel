@@ -23,26 +23,35 @@ from runner.application import (
     validate_scenario,
 )
 from runner.scenario import ScenarioError
+from runner.terminal import TerminalUI
 
 _OUTPUT_LIMIT = 512
 
 _APP_SETTINGS = {
     "add_completion": False,
     "context_settings": {"help_option_names": ["-h", "--help"]},
-    "no_args_is_help": True,
     "pretty_exceptions_enable": False,
-    "rich_markup_mode": None,
+    "rich_markup_mode": "rich",
 }
 
 app = typer.Typer(
     name="verisentinel",
-    help="Validate coverage plans and run explicitly approved simulations.",
+    help="Authorization analysis, coverage validation, and controlled simulation.",
+    no_args_is_help=False,
     **_APP_SETTINGS,
 )
-scenario_app = typer.Typer(help="Validate planner scenario files.", **_APP_SETTINGS)
-auth_app = typer.Typer(help="Inspect credential source metadata.", **_APP_SETTINGS)
-corpus_app = typer.Typer(help="Build and inspect the coverage corpus.", **_APP_SETTINGS)
-sandbox_app = typer.Typer(help="Inspect controlled-execution readiness.", **_APP_SETTINGS)
+scenario_app = typer.Typer(
+    help="Validate and run scenario files.", no_args_is_help=True, **_APP_SETTINGS
+)
+auth_app = typer.Typer(
+    help="Inspect credential source metadata.", no_args_is_help=True, **_APP_SETTINGS
+)
+corpus_app = typer.Typer(
+    help="Build and inspect the coverage corpus.", no_args_is_help=True, **_APP_SETTINGS
+)
+sandbox_app = typer.Typer(
+    help="Build and verify controlled execution.", no_args_is_help=True, **_APP_SETTINGS
+)
 
 app.add_typer(scenario_app, name="scenario")
 app.add_typer(auth_app, name="auth")
@@ -50,16 +59,59 @@ app.add_typer(corpus_app, name="corpus")
 app.add_typer(sandbox_app, name="sandbox")
 
 
+@app.callback(invoke_without_command=True)
+def launchpad(context: typer.Context) -> None:
+    """Open the terminal command launchpad."""
+    if context.invoked_subcommand is None:
+        TerminalUI().home()
+
+
 @scenario_app.command("validate")
 def scenario_validate(
     path: Annotated[Path, typer.Argument(help="Planner scenario YAML path.")],
 ) -> None:
     """Validate a scenario without starting a planner run."""
-    _invoke(
+    scenario = _invoke(
         lambda: validate_scenario(path),
         input_errors=(ScenarioError,),
     )
-    typer.echo("Scenario is valid.")
+    TerminalUI().success(
+        "SCENARIO VALID",
+        f"{_bounded(scenario.name)} · {_bounded(scenario.target_scope)}",
+    )
+
+
+@scenario_app.command("run")
+def scenario_run(
+    path: Annotated[Path, typer.Argument(help="Planner scenario YAML path.")],
+    credential_source: Annotated[
+        str,
+        typer.Option(
+            "--credential-source",
+            metavar="SOURCE",
+            help=(
+                "Credential source: stdin, file:<path>, env:<name>, adc, or "
+                "impersonate:<principal>."
+            ),
+        ),
+    ],
+    rebuild_snapshot: Annotated[
+        bool,
+        typer.Option(
+            "--rebuild-snapshot",
+            help="Rebuild the configured corpus before starting.",
+        ),
+    ] = False,
+    quiet_trace: Annotated[
+        bool,
+        typer.Option(
+            "--quiet-trace",
+            help="Do not echo trace event names to standard error.",
+        ),
+    ] = False,
+) -> None:
+    """Run a scenario through explicit terminal review."""
+    _run_scenario(path, credential_source, rebuild_snapshot, quiet_trace)
 
 
 @auth_app.command("inspect")
@@ -86,9 +138,11 @@ def auth_inspect(
         lambda: inspect_authentication(source),
         input_errors=(AuthorizationError,),
     )
-    typer.echo(f"Source kind: {inspection.source_kind.value}")
-    typer.echo(f"Principal: {_bounded(inspection.principal)}")
-    typer.echo(f"Expires at: {inspection.expires_at.isoformat()}")
+    TerminalUI().authentication(
+        source_kind=inspection.source_kind.value,
+        principal=_bounded(inspection.principal),
+        expires_at=inspection.expires_at.isoformat(),
+    )
 
 
 @corpus_app.command("build")
@@ -109,25 +163,14 @@ def corpus_status() -> None:
 def sandbox_doctor() -> None:
     """Report local execution capsule readiness."""
     status = _invoke(inspect_sandbox)
-    typer.echo(f"Provider: {status.provider}")
-    typer.echo(f"Status: {'available' if status.available else 'unavailable'}")
-    typer.echo(f"Detail: {_bounded(status.detail)}")
-    for check in status.checks:
-        outcome = "pass" if check.passed else "fail"
-        typer.echo(
-            f"Check {check.name}: {outcome} - {_bounded(check.detail)}"
-        )
+    TerminalUI().sandbox_doctor(status)
 
 
 @sandbox_app.command("build")
 def sandbox_build() -> None:
     """Build the locked capsule image and prepare its private network."""
     report = _invoke(build_sandbox)
-    typer.echo("Status: ready")
-    typer.echo(f"Image: {_bounded(report.image)}")
-    typer.echo(f"Network: {_bounded(report.network)}")
-    network_status = "created" if report.network_created else "available"
-    typer.echo(f"Network status: {network_status}")
+    TerminalUI().sandbox_build(report)
 
 
 @app.command("run")
@@ -167,6 +210,15 @@ def run_command(
     ] = False,
 ) -> None:
     """Run the direct human-gated planner with the simulator default."""
+    _run_scenario(scenario, credential_source, rebuild_snapshot, quiet_trace)
+
+
+def _run_scenario(
+    scenario: Path,
+    credential_source: str,
+    rebuild_snapshot: bool,
+    quiet_trace: bool,
+) -> None:
     source = _invoke(
         lambda: parse_credential_source(credential_source),
         input_errors=(CredentialSourceError,),
@@ -197,9 +249,9 @@ def main(arguments: list[str] | None = None) -> int:
     except SystemExit as error:
         return error.code if isinstance(error.code, int) else 1
     except KeyboardInterrupt:
-        typer.echo(
-            "Interrupted. No implicit approval or execution was performed.",
-            err=True,
+        TerminalUI.errors().error(
+            "INTERRUPTED",
+            "No implicit approval or execution was performed.",
         )
         return 130
     return 0
@@ -214,32 +266,31 @@ def _invoke[Result](
     try:
         return operation()
     except KeyboardInterrupt:
-        typer.echo(
-            "Interrupted. No implicit approval or execution was performed.",
-            err=True,
+        TerminalUI.errors().error(
+            "INTERRUPTED",
+            "No implicit approval or execution was performed.",
         )
         raise typer.Exit(130) from None
     except input_errors as error:
         message = input_message or str(error)
-        typer.echo(f"Input error: {_bounded(message)}", err=True)
+        TerminalUI.errors().error("INPUT ERROR", _bounded(message))
         raise typer.Exit(2) from None
     except (PlannerError, OSError, RuntimeError) as error:
-        typer.echo(f"Application failure: {_bounded(str(error))}", err=True)
+        TerminalUI.errors().error("APPLICATION FAILURE", _bounded(str(error)))
         raise typer.Exit(1) from None
     except Exception as error:
-        typer.echo(f"Application failure: {type(error).__name__}", err=True)
+        TerminalUI.errors().error("APPLICATION FAILURE", type(error).__name__)
         raise typer.Exit(1) from None
 
 
 def _render_corpus(status: CorpusStatus) -> None:
-    if not status.available:
-        typer.echo("Status: not built")
-        return
-    typer.echo("Status: available")
-    typer.echo(f"Matrix version: {_bounded(status.matrix_version or '')}")
-    typer.echo(f"Permissions: {status.permission_count}")
-    typer.echo(f"Detections: {status.detection_count}")
-    typer.echo(f"Techniques: {status.technique_count}")
+    TerminalUI().corpus(
+        available=status.available,
+        matrix_version=_bounded(status.matrix_version or ""),
+        permission_count=status.permission_count,
+        detection_count=status.detection_count,
+        technique_count=status.technique_count,
+    )
 
 
 def _bounded(value: str) -> str:

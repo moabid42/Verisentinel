@@ -37,7 +37,7 @@ from launchpad.service import LaunchpadService
 from proposer.gemini import GeminiProposer
 from proposer.service import ProposerService
 from runner.scenario import PlannerScenario, load_scenario
-from runner.terminal import parse_choice, render_candidates
+from runner.terminal import TerminalUI, parse_choice
 
 CODE_DIRECTORY = Path(__file__).resolve().parents[1]
 
@@ -249,12 +249,22 @@ def run_planner(request: PlannerRunRequest) -> int:
             state_version=engagement.state_version,
             execution_provider=execution.provider,
         )
-        print(f"\nEngagement: {engagement.engagement_id}")
-        print(f"Execution provider: {execution.provider}")
-        print(f"Debug trace: {trace_path}")
-        print(f"Model conversation: {conversation_path}")
+        terminal = TerminalUI()
+        terminal.run_started(
+            engagement_id=engagement.engagement_id,
+            provider=execution.provider,
+            trace_path=str(trace_path),
+            conversation_path=str(conversation_path),
+        )
         result = planner.cycle(engagement.engagement_id)
-        return _operator_loop(planner, launchpad, scenario, result, trace)
+        return _operator_loop(
+            planner,
+            launchpad,
+            scenario,
+            result,
+            trace,
+            terminal,
+        )
     except KeyboardInterrupt:
         trace.emit("runner", "interrupted", level="warning")
         raise
@@ -347,19 +357,16 @@ def _operator_loop(
     scenario: PlannerScenario,
     result: CycleResult,
     trace: DebugTrace,
+    terminal: TerminalUI,
 ) -> int:
     while result.status == EngagementStatus.AWAITING_APPROVAL:
-        print(render_candidates(result.candidates))
-        print(
-            "\nChoose: 1-3 approve | r1-r3 reject | a alternatives | "
-            "x reject all | q terminate"
-        )
+        terminal.candidates(result.candidates)
         while True:
             try:
-                choice = parse_choice(input("> "), result.candidates)
+                choice = parse_choice(terminal.choice_prompt(), result.candidates)
                 break
             except ValueError as error:
-                print(f"Invalid choice: {error}")
+                terminal.invalid_choice(str(error))
 
         current = planner.get(result.engagement_id)
         decision = OperatorDecision(
@@ -380,7 +387,7 @@ def _operator_loop(
         )
         launchpad.decide(decision)
         result = planner.decide(decision)
-        print(f"\n{result.message}")
+        terminal.cycle_message(result.message)
 
     trace.emit(
         "runner",
@@ -389,4 +396,6 @@ def _operator_loop(
         status=result.status,
         message=result.message,
     )
-    return 0 if result.status != EngagementStatus.FAILED else 1
+    failed = result.status == EngagementStatus.FAILED
+    terminal.finished(failed=failed)
+    return 1 if failed else 0

@@ -145,6 +145,7 @@ def test_top_level_and_nested_help_are_stable(
         ("--help",),
         ("scenario", "--help"),
         ("scenario", "validate", "--help"),
+        ("scenario", "run", "--help"),
         ("auth", "--help"),
         ("auth", "inspect", "--help"),
         ("corpus", "--help"),
@@ -166,6 +167,7 @@ def test_top_level_and_nested_help_are_stable(
     assert "run" in top_level.stdout
     assert ".env" not in top_level.stdout
     assert "validate" in results[1].stdout
+    assert "run" in results[1].stdout
     assert all(result.exit_code == 0 for result in results)
     assert all(TEST_SECRET not in result.output for result in results)
 
@@ -177,14 +179,16 @@ def test_scenario_validate_route_succeeds(tmp_path: Path) -> None:
     result = CLI.invoke(app, ["scenario", "validate", str(path)])
 
     assert result.exit_code == 0
-    assert result.stdout == "Scenario is valid.\n"
+    assert "SCENARIO VALID" in result.stdout
+    assert "test-scenario" in result.stdout
+    assert "projects/security-sandbox" in result.stdout
 
 
 def test_scenario_validate_rejects_missing_path() -> None:
     result = CLI.invoke(app, ["scenario", "validate", "missing.yaml"])
 
     assert result.exit_code == 2
-    assert "Input error" in result.output
+    assert "INPUT ERROR" in result.output
 
 
 def test_required_command_input_returns_two() -> None:
@@ -226,9 +230,10 @@ def test_auth_inspect_prints_only_public_metadata(
     )
 
     assert result.exit_code == 0
-    assert "Source kind: env" in result.stdout
-    assert "Principal: runner@example.test" in result.stdout
-    assert f"Expires at: {expires_at.isoformat()}" in result.stdout
+    assert "AUTHENTICATION" in result.stdout
+    assert "env" in result.stdout
+    assert "runner@example.test" in result.stdout
+    assert expires_at.isoformat() in result.stdout
     assert "TEST_TOKEN" not in result.stdout
 
 
@@ -253,10 +258,13 @@ def test_corpus_routes_render_service_results(
     current = CLI.invoke(app, ["corpus", "status"])
 
     assert built.exit_code == 0
-    assert "Matrix version: sha256:matrix" in built.stdout
-    assert "Techniques: 4" in built.stdout
+    assert "CORPUS  READY" in built.stdout
+    assert "Matrix" in built.stdout
+    assert "sha256:matrix" in built.stdout
+    assert "Techniques" in built.stdout
+    assert "4" in built.stdout
     assert current.exit_code == 0
-    assert current.stdout == "Status: not built\n"
+    assert "CORPUS  NOT BUILT" in current.stdout
 
 
 def test_sandbox_doctor_reports_each_readiness_check(
@@ -281,9 +289,10 @@ def test_sandbox_doctor_reports_each_readiness_check(
     result = CLI.invoke(app, ["sandbox", "doctor"])
 
     assert result.exit_code == 0
-    assert "Provider: capsule" in result.stdout
-    assert "Status: available" in result.stdout
-    assert "Check runtime: pass" in result.stdout
+    assert "Provider  capsule" in result.stdout
+    assert "SANDBOX  READY" in result.stdout
+    assert "PASS" in result.stdout
+    assert "runtime" in result.stdout
 
 
 def test_sandbox_build_reports_prepared_resources(
@@ -302,8 +311,9 @@ def test_sandbox_build_reports_prepared_resources(
     result = CLI.invoke(app, ["sandbox", "build"])
 
     assert result.exit_code == 0
-    assert "Status: ready" in result.stdout
-    assert "Network status: created" in result.stdout
+    assert "SANDBOX  BUILT" in result.stdout
+    assert "Network state" in result.stdout
+    assert "created" in result.stdout
 
 
 def test_run_routes_validated_input_to_application_service(
@@ -338,6 +348,25 @@ def test_run_routes_validated_input_to_application_service(
     assert requests[0].quiet_trace
 
 
+def test_scenario_run_uses_positional_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[PlannerRunRequest] = []
+    monkeypatch.setattr(
+        cli_module,
+        "run_planner",
+        lambda request: requests.append(request) or 0,
+    )
+
+    result = CLI.invoke(
+        app,
+        ["scenario", "run", "scenario.yaml", "--credential-source", "adc"],
+    )
+
+    assert result.exit_code == 0
+    assert requests[0].scenario_path == Path("scenario.yaml")
+
+
 def test_known_application_failure_returns_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -349,7 +378,8 @@ def test_known_application_failure_returns_one(
     result = CLI.invoke(app, ["corpus", "build"])
 
     assert result.exit_code == 1
-    assert "Application failure: synthetic corpus failure" in result.output
+    assert "APPLICATION FAILURE" in result.output
+    assert "synthetic corpus failure" in result.output
 
 
 def test_interruption_returns_130_without_implicit_action(

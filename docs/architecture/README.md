@@ -3,9 +3,9 @@
 This directory records the accepted boundaries and planned evolution of the
 Verisentinel application. The current application remains the deterministic,
 human-gated planner described in [`code/README.md`](../../code/README.md). These
-documents record the implemented execution foundation and unified Typer CLI,
-and define later changes. The planned capsule provider and copilot adapters are
-not implemented.
+documents record the implemented execution foundation, unified Typer CLI, and
+local execution capsule, and define later changes. The copilot adapter and
+managed execution runtime are not implemented.
 
 ## Decision Records
 

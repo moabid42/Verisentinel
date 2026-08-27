@@ -1,14 +1,14 @@
 # Agentic Copilot and Controlled Execution Roadmap
 
-- Status: Milestones 1-2 implemented; Milestones 3-5 planned
-- Last updated: 2026-08-26
+- Status: Milestones 1-3 implemented; Milestones 4-5 planned
+- Last updated: 2026-08-27
 
 ## Purpose
 
 This roadmap sequences the accepted architecture into independently reversible
-milestones. Milestones 1 and 2 are implemented. The current supported workflow
-remains the deterministic simulator described in
-[`code/README.md`](../../code/README.md); later milestones remain plans rather
+milestones. Milestones 1 through 3 are implemented. The simulator remains the
+default, and the bounded local capsule can execute approved typed operations
+only against its private mock endpoint. Later milestones remain plans rather
 than implementation-status claims.
 
 Each milestone must preserve the authority split in [ADR-0001](decisions/0001-copilot-orchestration-boundaries.md)
@@ -167,6 +167,14 @@ verisentinel trace export SESSION_ID
 ```
 
 ## Milestone 3: Local Execution Capsule
+
+Implementation completed on 2026-08-27. The optional capsule provider now uses
+the repository digest lock, a fixed typed-operation entrypoint, an internal
+Docker network, bounded resources and output, temporary read-only inputs, and
+guaranteed cleanup. Read-only readiness diagnostics and Docker integration tests
+cover the complete approved execution path against the private mock endpoint.
+See the [Milestone 3 usage guide](../usage/milestone03.md) for manual checks and
+the reviewed measurement summary.
 
 Implement a container `ExecutionProvider` exactly as constrained by ADR-0002.
 The first capsule communicates only with a private mocked endpoint and executes

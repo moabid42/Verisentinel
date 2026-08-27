@@ -157,14 +157,17 @@ Acceptance gate:
 - Adding Typer uses a bounded dependency version and does not introduce another
   CLI framework.
 
-Later CLI expansion, after the copilot persistence contract is accepted:
+The local terminal shell now provides UI-only session inspection and resumption:
 
 ```text
 verisentinel session list
 verisentinel session show SESSION_ID
 verisentinel session resume SESSION_ID
-verisentinel trace export SESSION_ID
 ```
+
+These records contain sanitized local command names and exit codes only. They
+are separate from the future model-driven copilot session contract and do not
+grant proposal, approval, or execution authority.
 
 ## Milestone 3: Local Execution Capsule
 

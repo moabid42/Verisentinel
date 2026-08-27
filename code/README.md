@@ -165,6 +165,8 @@ The project uses editable installation so changes to local Python files take eff
 Use the single installed command application for maintained workflows:
 
 ```text
+verisentinel
+verisentinel shell --resume SESSION_ID
 verisentinel scenario validate PATH
 verisentinel auth inspect --credential-source SOURCE
 verisentinel corpus build
@@ -172,10 +174,19 @@ verisentinel corpus status
 verisentinel sandbox build
 verisentinel sandbox doctor
 verisentinel scenario run PATH --credential-source SOURCE
+verisentinel session list
+verisentinel session show SESSION_ID
+verisentinel session resume SESSION_ID
 ```
 
-Run `.venv/bin/verisentinel --help` or nested `--help` commands for the
-complete option descriptions. See
+With an interactive terminal, `.venv/bin/verisentinel` starts a persistent
+command session. Redirected or non-interactive invocation prints the compact
+command launcher instead. Direct subcommands remain stable for scripts. See the
+[`terminal shell guide`](../docs/usage/terminal-shell.md) for natural command
+forms, slash commands, persistence, and resumption.
+
+Run `.venv/bin/verisentinel --help` or nested `--help` commands for complete
+option descriptions. See
 [`../docs/usage/milestone02.md`](../docs/usage/milestone02.md) for manual tests,
 exit codes, and security checks. Capsule setup and isolation checks are in the
 [`Milestone 3 guide`](../docs/usage/milestone03.md).
@@ -282,11 +293,18 @@ not expose credential material to its deterministic action implementation.
 
 ## 3. Run the direct human-gated loop
 
-From `code/`:
+From an interactive terminal in `code/`, open the shell and enter the run:
 
 ```bash
-.venv/bin/verisentinel scenario run scenario.yaml --credential-source=adc
+.venv/bin/verisentinel
 ```
+
+```text
+run scenario scenario.yaml --credential-source adc
+```
+
+For scripts, use
+`.venv/bin/verisentinel scenario run scenario.yaml --credential-source=adc`.
 
 The runner reuses the current matrix and builds one automatically when none exists. To deliberately
 rebuild it first:

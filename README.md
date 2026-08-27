@@ -157,12 +157,19 @@ cp scenario.example.yaml scenario.yaml     # then describe your authorized start
 **4. Run the human-gated loop:**
 
 ```bash
-.venv/bin/verisentinel scenario run scenario.yaml --credential-source=adc
+.venv/bin/verisentinel
+```
+
+Then enter the scenario command in the persistent terminal session:
+
+```text
+run scenario scenario.yaml --credential-source adc
 ```
 
 Gemini ranks cataloged techniques, the validator filters them, and the terminal launchpad shows up
 to three admissible candidates. Approving one triggers fresh validation, a one-time approval record,
-a single guarded simulator call, and a new environment-state version.
+a single guarded simulator call, and a new environment-state version. Scripts can use the direct
+`verisentinel scenario run ...` command without opening the shell.
 
 **Run the tests:**
 

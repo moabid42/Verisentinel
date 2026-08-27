@@ -49,6 +49,17 @@ class RecordingProbe:
         self.calls.append(values)
 
 
+class RecordingActivator:
+    def __init__(self, *, fails: bool = False) -> None:
+        self.calls: list[dict[str, str]] = []
+        self.fails = fails
+
+    def activate(self, **values: str) -> None:
+        self.calls.append(values)
+        if self.fails:
+            raise RuntimeError("gateway unavailable")
+
+
 def scenario() -> PlannerScenario:
     return PlannerScenario.model_validate(
         {
@@ -73,10 +84,12 @@ def test_remote_connection_verifies_principal_and_persists_no_token(
 ) -> None:
     repository = SandboxConnectionRepository(tmp_path / "connections")
     probe = RecordingProbe()
+    activator = RecordingActivator()
     service = SandboxConnectionService(
         repository,
         resolver=StaticResolver(),  # type: ignore[arg-type]
         probe=probe,
+        activator=activator,
     )
 
     result = service.connect(
@@ -89,6 +102,14 @@ def test_remote_connection_verifies_principal_and_persists_no_token(
     assert result.infrastructure_id is None
     assert result.principal == PRINCIPAL
     assert probe.calls[0]["access_token"] == ACCESS_TOKEN
+    assert activator.calls == [
+        {
+            "infrastructure_path": (
+                "projects/security-sandbox/buckets/scenario-target"
+            ),
+            "principal": PRINCIPAL,
+        }
+    ]
     persisted = (tmp_path / "connections" / "active.json").read_text(
         encoding="utf-8"
     )
@@ -170,3 +191,24 @@ def test_remote_connection_rejects_development_id(tmp_path: Path) -> None:
             development_mode=False,
             infrastructure_id="infra_" + "3" * 32,
         )
+
+
+def test_connection_is_not_persisted_when_gateway_activation_fails(
+    tmp_path: Path,
+) -> None:
+    repository = SandboxConnectionRepository(tmp_path)
+    service = SandboxConnectionService(
+        repository,
+        resolver=StaticResolver(),  # type: ignore[arg-type]
+        probe=RecordingProbe(),
+        activator=RecordingActivator(fails=True),
+    )
+
+    with pytest.raises(RuntimeError, match="gateway unavailable"):
+        service.connect(
+            scenario(),
+            CredentialSource(kind=CredentialSourceKind.STDIN),
+            development_mode=False,
+        )
+
+    assert repository.optional_active() is None

@@ -70,6 +70,12 @@ class ConnectionProbe(Protocol):
     ) -> None: ...
 
 
+class ConnectionActivator(Protocol):
+    """Activate the restricted Docker route for a verified connection."""
+
+    def activate(self, *, infrastructure_path: str, principal: str) -> None: ...
+
+
 class GcpConnectionProbe:
     """Verify object creation against the exact scenario bucket."""
 
@@ -143,11 +149,13 @@ class SandboxConnectionService:
         infrastructure: InfrastructureRepository | None = None,
         resolver: CredentialResolver | None = None,
         probe: ConnectionProbe | None = None,
+        activator: ConnectionActivator | None = None,
     ) -> None:
         self.repository = repository
         self.infrastructure = infrastructure
         self.resolver = resolver or CredentialResolver()
         self.probe = probe or GcpConnectionProbe()
+        self.activator = activator
 
     def connect(
         self,
@@ -177,20 +185,19 @@ class SandboxConnectionService:
             )
         connection = SandboxConnection(
             connection_id=connection_id,
-            mode=(
-                ConnectionMode.DEVELOPMENT
-                if development_mode
-                else ConnectionMode.REMOTE
-            ),
-            infrastructure_id=(
-                development.infrastructure_id if development is not None else None
-            ),
+            mode=(ConnectionMode.DEVELOPMENT if development_mode else ConnectionMode.REMOTE),
+            infrastructure_id=(development.infrastructure_id if development is not None else None),
             infrastructure_path=scenario.infrastructure.path,
             scenario_name=scenario.name,
             principal=scenario.starting_service_account.identity,
             credential_ref=credential_ref,
             source_kind=source.kind,
         )
+        if self.activator is not None:
+            self.activator.activate(
+                infrastructure_path=connection.infrastructure_path,
+                principal=connection.principal,
+            )
         self.repository.put(connection)
         return connection
 
@@ -203,9 +210,7 @@ class SandboxConnectionService:
     ) -> DevelopmentInfrastructure | None:
         if not development_mode:
             if infrastructure_id is not None:
-                raise ValueError(
-                    "infrastructure IDs are accepted only with the --dev option"
-                )
+                raise ValueError("infrastructure IDs are accepted only with the --dev option")
             return None
         if infrastructure_id is None:
             raise ValueError("development connection requires an infrastructure ID")
@@ -213,9 +218,7 @@ class SandboxConnectionService:
             raise RuntimeError("development infrastructure repository is unavailable")
         target = self.infrastructure.get(infrastructure_id)
         if target.path != scenario.infrastructure.path:
-            raise AuthorizationError(
-                "development infrastructure does not match the scenario path"
-            )
+            raise AuthorizationError("development infrastructure does not match the scenario path")
         if target.starting_principal != scenario.starting_service_account.identity:
             raise AuthorizationError(
                 "development infrastructure does not match the scenario principal"

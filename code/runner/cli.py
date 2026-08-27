@@ -12,6 +12,7 @@ import typer
 from core.config import Paths
 from core.errors import AuthorizationError, NotFoundError, PlannerError
 from execution.credentials import CredentialSourceError, parse_credential_source
+from execution.gateway.manager import GatewayManager
 from runner.application import (
     CorpusStatus,
     PlannerConfigurationError,
@@ -134,6 +135,7 @@ def scenario_validate(
 
 @scenario_app.command("run")
 def scenario_run(
+    context: typer.Context,
     path: Annotated[Path, typer.Argument(help="Planner scenario YAML path.")],
     credential_source: Annotated[
         str,
@@ -162,7 +164,13 @@ def scenario_run(
     ] = False,
 ) -> None:
     """Run a scenario through explicit terminal review."""
-    _run_scenario(path, credential_source, rebuild_snapshot, quiet_trace)
+    _run_scenario(
+        path,
+        credential_source,
+        rebuild_snapshot,
+        quiet_trace,
+        development_mode=_dev_mode(context),
+    )
 
 
 @auth_app.command("inspect")
@@ -375,6 +383,7 @@ def session_resume(
 
 @app.command("run")
 def run_command(
+    context: typer.Context,
     scenario: Annotated[
         Path,
         typer.Option(
@@ -410,7 +419,13 @@ def run_command(
     ] = False,
 ) -> None:
     """Run the direct human-gated planner with the simulator default."""
-    _run_scenario(scenario, credential_source, rebuild_snapshot, quiet_trace)
+    _run_scenario(
+        scenario,
+        credential_source,
+        rebuild_snapshot,
+        quiet_trace,
+        development_mode=_dev_mode(context),
+    )
 
 
 def _run_scenario(
@@ -418,6 +433,8 @@ def _run_scenario(
     credential_source: str,
     rebuild_snapshot: bool,
     quiet_trace: bool,
+    *,
+    development_mode: bool,
 ) -> None:
     source = _invoke(
         lambda: parse_credential_source(credential_source),
@@ -431,6 +448,7 @@ def _run_scenario(
                 credential_source=source,
                 rebuild_snapshot=rebuild_snapshot,
                 quiet_trace=quiet_trace,
+                development_mode=development_mode,
             )
         ),
         input_errors=(ScenarioError, PlannerConfigurationError),
@@ -513,6 +531,7 @@ def _connection_service() -> SandboxConnectionService:
     return SandboxConnectionService(
         _connection_repository(),
         infrastructure=_infrastructure_repository(),
+        activator=GatewayManager(),
     )
 
 

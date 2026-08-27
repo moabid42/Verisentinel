@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from execution.capsule.entrypoint import ENDPOINT_URL
 from execution.capsule.provider import CapsuleConfiguration
 from execution.capsule.runtime import DockerRuntime, DockerRuntimeError, ProcessOutput
+from execution.gateway.manager import gateway_image_lock_path
 
 
 class CapsuleInspectionRuntime(Protocol):
@@ -49,9 +51,11 @@ class CapsuleDoctor:
         self,
         configuration: CapsuleConfiguration | None = None,
         runtime: CapsuleInspectionRuntime | None = None,
+        gateway_lock_path: Path | None = None,
     ) -> None:
         self.configuration = configuration or CapsuleConfiguration.from_environment()
         self.runtime = runtime or DockerRuntime()
+        self.gateway_lock_path = gateway_lock_path or gateway_image_lock_path()
 
     def inspect(self) -> CapsuleDoctorReport:
         """Return all readiness checks without starting a container or request."""
@@ -62,6 +66,7 @@ class CapsuleDoctor:
                 (
                     self._host_security_check(),
                     self._image_digest_check(),
+                    self._gateway_image_check(),
                     self._fixed_entrypoint_check(),
                     self._non_root_image_check(),
                     self._internal_network_check(),
@@ -73,6 +78,7 @@ class CapsuleDoctor:
                 for name in (
                     "host-security",
                     "image-digest",
+                    "gateway-image",
                     "fixed-entrypoint",
                     "non-root-image",
                     "internal-network",
@@ -108,7 +114,7 @@ class CapsuleDoctor:
                 CapsuleCheck(
                     name="fixed-endpoint",
                     passed=ENDPOINT_URL == "http://verisentinel-mock:8080/execute",
-                    detail="the capsule endpoint is the fixed private mock service",
+                    detail=("the capsule endpoint is the fixed private infrastructure gateway"),
                 ),
             )
         )
@@ -136,11 +142,7 @@ class CapsuleDoctor:
         return CapsuleCheck(
             name="runtime",
             passed=passed,
-            detail=(
-                "Docker daemon is available"
-                if passed
-                else "Docker daemon is unavailable"
-            ),
+            detail=("Docker daemon is available" if passed else "Docker daemon is unavailable"),
         )
 
     def _host_security_check(self) -> CapsuleCheck:
@@ -154,9 +156,13 @@ class CapsuleDoctor:
         passed = False
         if result is not None and result.return_code == 0:
             try:
-                security, cgroup, operating_system = result.stdout.decode().strip().split(
-                    "|",
-                    maxsplit=2,
+                security, cgroup, operating_system = (
+                    result.stdout.decode()
+                    .strip()
+                    .split(
+                        "|",
+                        maxsplit=2,
+                    )
                 )
                 options = json.loads(security)
                 passed = (
@@ -214,10 +220,14 @@ class CapsuleDoctor:
         config = document.get("Config", {}) if document is not None else {}
         entrypoint = config.get("Entrypoint") if isinstance(config, dict) else None
         command = config.get("Cmd") if isinstance(config, dict) else None
-        passed = entrypoint == [
-            "/usr/local/bin/python",
-            "/opt/verisentinel/entrypoint.py",
-        ] and not command
+        passed = (
+            entrypoint
+            == [
+                "/usr/local/bin/python",
+                "/opt/verisentinel/entrypoint.py",
+            ]
+            and not command
+        )
         return CapsuleCheck(
             name="fixed-entrypoint",
             passed=passed,
@@ -225,6 +235,36 @@ class CapsuleDoctor:
                 "image has the fixed typed-operation entrypoint and no command"
                 if passed
                 else "image entrypoint does not match the repository contract"
+            ),
+        )
+
+    def _gateway_image_check(self) -> CapsuleCheck:
+        try:
+            image = self.gateway_lock_path.read_text(encoding="utf-8").strip()
+            expected = image.rsplit("@", maxsplit=1)[1]
+        except (OSError, IndexError):
+            image = ""
+            expected = ""
+        result = (
+            self._run(
+                ("image", "inspect", image, "--format", "{{.Id}}"),
+            )
+            if image
+            else None
+        )
+        passed = (
+            image.startswith("verisentinel-gateway@sha256:")
+            and result is not None
+            and result.return_code == 0
+            and result.stdout.decode(errors="replace").strip() == expected
+        )
+        return CapsuleCheck(
+            name="gateway-image",
+            passed=passed,
+            detail=(
+                "gateway image matches the active digest lock"
+                if passed
+                else "gateway image is absent or does not match its lock"
             ),
         )
 
@@ -253,11 +293,7 @@ class CapsuleDoctor:
                 "{{.Internal}}",
             )
         )
-        passed = (
-            result is not None
-            and result.return_code == 0
-            and result.stdout.strip() == b"true"
-        )
+        passed = result is not None and result.return_code == 0 and result.stdout.strip() == b"true"
         return CapsuleCheck(
             name="internal-network",
             passed=passed,

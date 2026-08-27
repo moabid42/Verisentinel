@@ -273,14 +273,17 @@ class TerminalUI:
     def sandbox_build(self, report: CapsuleBuildReport) -> None:
         """Render resources prepared for the local capsule."""
         network_status = "created" if report.network_created else "available"
+        rows = [
+            ("Image", report.image),
+            ("Network", report.network),
+            ("Network state", network_status),
+        ]
+        if report.gateway_image is not None:
+            rows.append(("Gateway", report.gateway_image))
+        rows.append(("Next", "Run verisentinel sandbox doctor"))
         self._key_values(
             "SANDBOX",
-            (
-                ("Image", report.image),
-                ("Network", report.network),
-                ("Network state", network_status),
-                ("Next", "Run verisentinel sandbox doctor"),
-            ),
+            tuple(rows),
             state="BUILT",
             state_style="success",
         )

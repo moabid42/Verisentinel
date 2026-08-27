@@ -32,6 +32,7 @@ class CapsuleBuildReport:
     image: str
     network: str
     network_created: bool
+    gateway_image: str | None = None
 
 
 class CapsuleBuilder:
@@ -62,11 +63,15 @@ class CapsuleBuilder:
             timeout_seconds=300.0,
             failure="capsule image build failed",
         )
-        image_id = self._require_success(
-            ("image", "inspect", _BUILD_TAG, "--format", "{{.Id}}"),
-            timeout_seconds=10.0,
-            failure="built capsule image could not be inspected",
-        ).stdout.decode(errors="replace").strip()
+        image_id = (
+            self._require_success(
+                ("image", "inspect", _BUILD_TAG, "--format", "{{.Id}}"),
+                timeout_seconds=10.0,
+                failure="built capsule image could not be inspected",
+            )
+            .stdout.decode(errors="replace")
+            .strip()
+        )
         image = f"verisentinel-capsule@{image_id}"
         CapsuleConfiguration(
             image=image,
@@ -101,9 +106,7 @@ class CapsuleBuilder:
         )
         if inspected.return_code == 0:
             if inspected.stdout.strip() != b"true":
-                raise DockerRuntimeError(
-                    "configured capsule network exists but is not internal"
-                )
+                raise DockerRuntimeError("configured capsule network exists but is not internal")
             return False
 
         self._require_success(

@@ -28,6 +28,7 @@ from execution.credentials import (
     CredentialResolver,
     CredentialSource,
 )
+from execution.gateway.manager import GatewayBuilder, GatewayBuildReport, GatewayManager
 from execution.service import ExecutionService
 from green_agent.orchestrator import GreenAgent
 from ingestion.models import BuildSnapshotRequest
@@ -36,6 +37,11 @@ from ingestion.snapshot import SnapshotRepository
 from launchpad.service import LaunchpadService
 from proposer.gemini import GeminiProposer
 from proposer.service import ProposerService
+from runner.connection import (
+    ConnectionMode,
+    SandboxConnection,
+    SandboxConnectionRepository,
+)
 from runner.scenario import PlannerScenario, load_scenario
 from runner.terminal import TerminalUI, parse_choice
 
@@ -70,6 +76,12 @@ class CapsuleBuilderGateway(Protocol):
     def build(self) -> CapsuleBuildReport: ...
 
 
+class InfrastructureGatewayBuilder(Protocol):
+    """Gateway image operation needed by sandbox setup."""
+
+    def build(self) -> GatewayBuildReport: ...
+
+
 @dataclass(frozen=True, slots=True)
 class CorpusStatus:
     """Bounded summary of the current coverage corpus."""
@@ -89,6 +101,7 @@ class PlannerRunRequest:
     credential_source: CredentialSource
     rebuild_snapshot: bool = False
     quiet_trace: bool = False
+    development_mode: bool = False
 
 
 def validate_scenario(path: Path) -> PlannerScenario:
@@ -131,9 +144,19 @@ def inspect_sandbox(
 def build_sandbox(
     *,
     builder: CapsuleBuilderGateway | None = None,
+    gateway_builder: InfrastructureGatewayBuilder | None = None,
 ) -> CapsuleBuildReport:
     """Build and prepare the local execution capsule."""
-    return (builder or CapsuleBuilder()).build()
+    report = (builder or CapsuleBuilder()).build()
+    if builder is not None and gateway_builder is None:
+        return report
+    gateway = (gateway_builder or GatewayBuilder()).build()
+    return CapsuleBuildReport(
+        image=report.image,
+        network=report.network,
+        network_created=report.network_created,
+        gateway_image=gateway.image,
+    )
 
 
 def run_planner(request: PlannerRunRequest) -> int:
@@ -147,12 +170,15 @@ def run_planner(request: PlannerRunRequest) -> int:
         )
 
     paths = Paths()
+    connection = _require_sandbox_connection(
+        paths,
+        scenario,
+        request,
+    )
     run_id = new_id("run")
     trace_path = paths.runtime / "traces" / f"{run_id}.jsonl"
     progress_path = paths.runtime / "traces" / f"{run_id}.progress.log"
-    conversation_path = paths.runtime / "traces" / (
-        f"{run_id}.model-conversation.jsonl"
-    )
+    conversation_path = paths.runtime / "traces" / (f"{run_id}.model-conversation.jsonl")
     trace = DebugTrace(
         trace_path,
         run_id,
@@ -170,10 +196,7 @@ def run_planner(request: PlannerRunRequest) -> int:
         "conversation",
         "log_initialized",
         scenario=scenario.name,
-        note=(
-            "System, user, assistant, thought-summary, usage, and error "
-            "records follow."
-        ),
+        note=("System, user, assistant, thought-summary, usage, and error records follow."),
     )
     trace.emit(
         "runner",
@@ -222,6 +245,8 @@ def run_planner(request: PlannerRunRequest) -> int:
             paths=paths,
             credential_resolver=credential_resolver,
             trace=trace,
+            provider="capsule",
+            enabled=True,
         )
         planner = GreenAgent(
             snapshots=snapshots,
@@ -248,6 +273,7 @@ def run_planner(request: PlannerRunRequest) -> int:
             matrix_version=matrix.matrix_version,
             state_version=engagement.state_version,
             execution_provider=execution.provider,
+            infrastructure_path=connection.infrastructure_path,
         )
         terminal = TerminalUI()
         terminal.run_started(
@@ -290,6 +316,48 @@ def _corpus_status(snapshot: MatrixSnapshot) -> CorpusStatus:
         detection_count=len(snapshot.detections),
         technique_count=len(snapshot.techniques),
     )
+
+
+def _require_sandbox_connection(
+    paths: Paths,
+    scenario: PlannerScenario,
+    request: PlannerRunRequest,
+) -> SandboxConnection:
+    connection = SandboxConnectionRepository(
+        paths.runtime / "sandbox" / "connection"
+    ).optional_active()
+    if connection is None:
+        raise PlannerConfigurationError(
+            "sandbox is not connected; run sandbox connect before the scenario"
+        )
+    expected_mode = (
+        ConnectionMode.DEVELOPMENT if request.development_mode else ConnectionMode.REMOTE
+    )
+    expected = (
+        expected_mode,
+        scenario.name,
+        scenario.infrastructure.path,
+        scenario.starting_service_account.identity,
+        scenario.starting_service_account.credential_ref,
+        request.credential_source.kind,
+    )
+    actual = (
+        connection.mode,
+        connection.scenario_name,
+        connection.infrastructure_path,
+        connection.principal,
+        connection.credential_ref,
+        connection.source_kind,
+    )
+    if actual != expected:
+        raise PlannerConfigurationError(
+            "active sandbox connection does not match this scenario and credential source"
+        )
+    GatewayManager().require_active(
+        infrastructure_path=connection.infrastructure_path,
+        principal=connection.principal,
+    )
+    return connection
 
 
 def _ensure_snapshot(

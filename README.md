@@ -15,9 +15,9 @@ Only proposals that pass both checks are shown to the operator, at most three at
 shapes what is *offered*; deterministic resolution and validation decide what is *allowed*.
 
 > **Scope / honesty.** "Detection" here means a match against a flattened permission table derived
-> from public rules, **not** a real alarm firing. The default executor is an **offline simulator**;
-> no real GCP execution provider is included. The tool measures reachability and coverage-overlap,
-> not real-world evasion.
+> from public rules, **not** a real alarm firing. Approved actions are delivered as typed envelopes
+> to a connected GCS sandbox; cataloged techniques are not arbitrary cloud commands. The tool
+> measures reachability and coverage-overlap, not real-world evasion.
 
 ---
 
@@ -93,7 +93,8 @@ flowchart TD
         Validator["validator<br/>bitset + Z3: feasibility &amp; coverage"]
         Launchpad["launchpad<br/>publishes &le; 3 candidates"]
         Terminal["runner<br/>terminal review"]
-        Execution["execution<br/>approval-gated simulator"]
+        Execution["execution<br/>approval-gated capsule"]
+        Gateway["fixed gateway<br/>connected GCS target"]
         Environment["environment<br/>versioned state"]
 
         Green -->|request ranking| Proposer
@@ -104,6 +105,7 @@ flowchart TD
         Green -->|review queue| Terminal
         Terminal -->|record choice| Launchpad
         Green -->|re-validate + run| Execution
+        Execution --> Gateway
         Execution -->|observation| Environment
         Environment -->|next state version| Green
     end
@@ -122,8 +124,8 @@ flowchart TD
   explicit choice.
 - **execution** re-validates the approved action, atomically consumes its
   approval, resolves a short-lived credential lease, and dispatches through the
-  provider boundary. The deterministic simulator is the default; the optional
-  local capsule is restricted to a private mock endpoint.
+  provider boundary. The local capsule can reach only a fixed infrastructure
+  gateway, which delivers the approved typed action to the connected target.
 - **environment** applies the resulting observation to produce the next immutable state version.
 
 ---
@@ -157,18 +159,20 @@ cp scenario.example.yaml scenario.yaml     # then describe your authorized start
 **4. Run the human-gated loop:**
 
 ```bash
+.venv/bin/verisentinel sandbox build
+.venv/bin/verisentinel sandbox connect --scenario scenario.yaml
 .venv/bin/verisentinel
 ```
 
 Then enter the scenario command in the persistent terminal session:
 
 ```text
-run scenario scenario.yaml --credential-source adc
+run scenario scenario.yaml --credential-source stdin
 ```
 
 Gemini ranks cataloged techniques, the validator filters them, and the terminal launchpad shows up
 to three admissible candidates. Approving one triggers fresh validation, a one-time approval record,
-a single guarded simulator call, and a new environment-state version. Scripts can use the direct
+a single guarded capsule delivery, and a new environment-state version. Scripts can use the direct
 `verisentinel scenario run ...` command without opening the shell.
 
 **Run the tests:**
@@ -188,9 +192,12 @@ evaluation pipeline, IAMouflage rebuilds, security notes, and troubleshooting â€
 - Secrets live in `code/.env` (gitignored). Never force-add it.
 - The IAM dataset and IAMouflage export paths default to the submodule locations above, and can be
   overridden with `IAM_DATASET_PATH` and `IAMOUFLAGE_DATA_PATH`.
-- Keep `EXECUTION_PROVIDER=simulator` for the default workflow. The optional
-  `capsule` provider executes only against its private mock endpoint; no live
-  GCP execution provider is implemented.
+- A run requires an active sandbox connection matching the scenario path,
+  starting service account, credential reference, credential-source kind, and
+  development mode.
+- Tokens are never command arguments. Normal mode reads a short-lived
+  service-account token from stdin by default; development mode uses ADC-backed
+  service-account impersonation.
 
 ## Security
 

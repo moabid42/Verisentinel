@@ -22,6 +22,7 @@ from core.models import (
 )
 from core.tracing import DebugTrace
 from execution.capsule.doctor import CapsuleDoctor, CapsuleDoctorReport
+from execution.capsule.setup import CapsuleBuilder, CapsuleBuildReport
 from execution.credentials import (
     CredentialInspection,
     CredentialResolver,
@@ -61,6 +62,12 @@ class CapsuleDoctorGateway(Protocol):
     """Read-only capsule operation needed by sandbox diagnostics."""
 
     def inspect(self) -> CapsuleDoctorReport: ...
+
+
+class CapsuleBuilderGateway(Protocol):
+    """Local capsule setup operation needed by the CLI."""
+
+    def build(self) -> CapsuleBuildReport: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +126,14 @@ def inspect_sandbox(
 ) -> CapsuleDoctorReport:
     """Report local capsule readiness without changing runtime state."""
     return (doctor or CapsuleDoctor()).inspect()
+
+
+def build_sandbox(
+    *,
+    builder: CapsuleBuilderGateway | None = None,
+) -> CapsuleBuildReport:
+    """Build and prepare the local execution capsule."""
+    return (builder or CapsuleBuilder()).build()
 
 
 def run_planner(request: PlannerRunRequest) -> int:

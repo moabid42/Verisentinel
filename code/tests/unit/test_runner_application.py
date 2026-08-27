@@ -7,6 +7,7 @@ from typing import cast
 
 from core.models import MatrixSnapshot
 from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
+from execution.capsule.setup import CapsuleBuildReport
 from execution.credentials import (
     CredentialResolver,
     CredentialSourceKind,
@@ -15,6 +16,7 @@ from execution.credentials import (
 )
 from runner.application import (
     build_corpus,
+    build_sandbox,
     inspect_authentication,
     inspect_sandbox,
     read_corpus_status,
@@ -71,6 +73,17 @@ class StubDoctor:
                     detail="Docker daemon is unavailable",
                 ),
             ),
+        )
+
+
+class StubBuilder:
+    """Return a fixed setup result without invoking Docker."""
+
+    def build(self) -> CapsuleBuildReport:
+        return CapsuleBuildReport(
+            image="verisentinel-capsule@sha256:" + "a" * 64,
+            network="verisentinel-capsule",
+            network_created=True,
         )
 
 
@@ -133,3 +146,10 @@ def test_sandbox_status_is_explicitly_unavailable() -> None:
     assert status.provider == "capsule"
     assert "not ready" in status.detail
     assert status.checks[0].name == "runtime"
+
+
+def test_sandbox_build_returns_prepared_resources() -> None:
+    report = build_sandbox(builder=StubBuilder())
+
+    assert report.network == "verisentinel-capsule"
+    assert report.network_created

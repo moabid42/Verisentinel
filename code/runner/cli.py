@@ -15,6 +15,7 @@ from runner.application import (
     PlannerConfigurationError,
     PlannerRunRequest,
     build_corpus,
+    build_sandbox,
     inspect_authentication,
     inspect_sandbox,
     read_corpus_status,
@@ -116,6 +117,17 @@ def sandbox_doctor() -> None:
         typer.echo(
             f"Check {check.name}: {outcome} - {_bounded(check.detail)}"
         )
+
+
+@sandbox_app.command("build")
+def sandbox_build() -> None:
+    """Build the locked capsule image and prepare its private network."""
+    report = _invoke(build_sandbox)
+    typer.echo("Status: ready")
+    typer.echo(f"Image: {_bounded(report.image)}")
+    typer.echo(f"Network: {_bounded(report.network)}")
+    network_status = "created" if report.network_created else "available"
+    typer.echo(f"Network status: {network_status}")
 
 
 @app.command("run")

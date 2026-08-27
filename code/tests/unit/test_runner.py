@@ -14,6 +14,7 @@ from core.models import (
 )
 from core.tracing import DebugTrace
 from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
+from execution.capsule.setup import CapsuleBuildReport
 from execution.credentials import CredentialInspection, CredentialSourceKind
 from runner.application import CorpusStatus, PlannerRunRequest
 from runner.cli import app, main
@@ -150,6 +151,7 @@ def test_top_level_and_nested_help_are_stable(
         ("corpus", "build", "--help"),
         ("corpus", "status", "--help"),
         ("sandbox", "--help"),
+        ("sandbox", "build", "--help"),
         ("sandbox", "doctor", "--help"),
         ("run", "--help"),
     )
@@ -282,6 +284,26 @@ def test_sandbox_doctor_reports_each_readiness_check(
     assert "Provider: capsule" in result.stdout
     assert "Status: available" in result.stdout
     assert "Check runtime: pass" in result.stdout
+
+
+def test_sandbox_build_reports_prepared_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "build_sandbox",
+        lambda: CapsuleBuildReport(
+            image="verisentinel-capsule@sha256:" + "a" * 64,
+            network="verisentinel-capsule",
+            network_created=True,
+        ),
+    )
+
+    result = CLI.invoke(app, ["sandbox", "build"])
+
+    assert result.exit_code == 0
+    assert "Status: ready" in result.stdout
+    assert "Network status: created" in result.stdout
 
 
 def test_run_routes_validated_input_to_application_service(

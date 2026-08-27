@@ -70,17 +70,29 @@ app.add_typer(session_app, name="session")
 
 
 @app.callback(invoke_without_command=True)
-def launchpad(context: typer.Context) -> None:
+def launchpad(
+    context: typer.Context,
+    dev: Annotated[
+        bool,
+        typer.Option(
+            "--dev",
+            help="Enable development infrastructure and live-delivery controls.",
+        ),
+    ] = False,
+) -> None:
     """Open the terminal command launchpad."""
+    context.ensure_object(dict)
+    context.obj["dev"] = dev
     if context.invoked_subcommand is None:
         if _interactive_terminal():
-            _run_shell()
+            _run_shell(dev_mode=dev)
         else:
-            TerminalUI().home()
+            TerminalUI().home(dev_mode=dev)
 
 
 @app.command("shell")
 def shell_command(
+    context: typer.Context,
     resume: Annotated[
         str | None,
         typer.Option(
@@ -91,7 +103,7 @@ def shell_command(
     ] = None,
 ) -> None:
     """Open the persistent interactive terminal shell."""
-    _run_shell(resume)
+    _run_shell(resume, dev_mode=_dev_mode(context))
 
 
 @scenario_app.command("validate")
@@ -222,10 +234,11 @@ def session_show(
 
 @session_app.command("resume")
 def session_resume(
+    context: typer.Context,
     session_id: Annotated[str, typer.Argument(help="Opaque terminal session ID.")],
 ) -> None:
     """Resume an existing interactive terminal session."""
-    _run_shell(session_id)
+    _run_shell(session_id, dev_mode=_dev_mode(context))
 
 
 @app.command("run")
@@ -352,10 +365,18 @@ def _session_repository() -> ShellSessionRepository:
     return ShellSessionRepository(Paths().runtime / "shell" / "sessions")
 
 
-def _run_shell(resume_session_id: str | None = None) -> None:
+def _run_shell(
+    resume_session_id: str | None = None,
+    *,
+    dev_mode: bool = False,
+) -> None:
+    executor: Callable[[list[str]], int] = (
+        (lambda arguments: main(["--dev", *arguments])) if dev_mode else main
+    )
     shell = InteractiveShell(
         repository=_session_repository(),
-        executor=main,
+        executor=executor,
+        dev_mode=dev_mode,
     )
     _invoke(
         lambda: shell.run(resume_session_id),
@@ -365,6 +386,10 @@ def _run_shell(resume_session_id: str | None = None) -> None:
 
 def _interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _dev_mode(context: typer.Context) -> bool:
+    return bool(context.find_root().params.get("dev", False))
 
 
 def _bounded(value: str) -> str:

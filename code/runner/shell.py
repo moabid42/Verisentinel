@@ -40,11 +40,13 @@ class InteractiveShell:
         executor: CommandExecutor,
         terminal: TerminalUI | None = None,
         reader: ShellReader | None = None,
+        dev_mode: bool = False,
     ) -> None:
         self.repository = repository
         self.executor = executor
         self.terminal = terminal or TerminalUI()
         self.reader = reader or self.terminal.read_shell_command
+        self.dev_mode = dev_mode
 
     def run(self, resume_session_id: str | None = None) -> int:
         """Start or resume a session and process input until explicit exit or EOF."""
@@ -53,7 +55,11 @@ class InteractiveShell:
             if resume_session_id
             else self.repository.create()
         )
-        self.terminal.shell_started(session, resumed=resume_session_id is not None)
+        self.terminal.shell_started(
+            session,
+            resumed=resume_session_id is not None,
+            dev_mode=self.dev_mode,
+        )
         while True:
             try:
                 raw = self.reader(self.terminal.shell_prompt(session))
@@ -88,7 +94,8 @@ class InteractiveShell:
             except ValueError as error:
                 self.terminal.shell_error(str(error))
                 continue
-            if arguments[0] not in _TOP_LEVEL_COMMANDS:
+            allowed_commands = _TOP_LEVEL_COMMANDS | ({"infra"} if self.dev_mode else set())
+            if arguments[0] not in allowed_commands:
                 self.terminal.shell_error(
                     "unknown command; this prompt accepts Verisentinel commands only"
                 )
@@ -121,7 +128,7 @@ class InteractiveShell:
             self.terminal.shell_closed(closed)
             return closed, True
         if command in {"help", "?", "--help"}:
-            self.terminal.shell_help()
+            self.terminal.shell_help(dev_mode=self.dev_mode)
             return session, False
         if command in {"status", "history"}:
             self.terminal.session(session)
@@ -135,7 +142,11 @@ class InteractiveShell:
         if command == "new":
             self.repository.close(session)
             created = self.repository.create()
-            self.terminal.shell_started(created, resumed=False)
+            self.terminal.shell_started(
+                created,
+                resumed=False,
+                dev_mode=self.dev_mode,
+            )
             return created, False
         self.terminal.shell_error("unknown slash command; enter /help to see available actions")
         return session, False

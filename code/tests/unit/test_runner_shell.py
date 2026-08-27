@@ -147,3 +147,27 @@ def test_shell_normalizes_optional_program_name() -> None:
         "corpus",
         "status",
     ]
+
+
+def test_infrastructure_commands_require_development_mode(tmp_path: Path) -> None:
+    regular_calls: list[list[str]] = []
+    development_calls: list[list[str]] = []
+    regular = InteractiveShell(
+        repository=ShellSessionRepository(tmp_path / "regular"),
+        executor=lambda arguments: regular_calls.append(arguments) or 0,
+        terminal=terminal(StringIO()),
+        reader=ScriptedReader("infra list", "/exit"),
+    )
+    development = InteractiveShell(
+        repository=ShellSessionRepository(tmp_path / "development"),
+        executor=lambda arguments: development_calls.append(arguments) or 0,
+        terminal=terminal(StringIO()),
+        reader=ScriptedReader("infra list", "/exit"),
+        dev_mode=True,
+    )
+
+    regular.run()
+    development.run()
+
+    assert not regular_calls
+    assert development_calls == [["infra", "list"]]

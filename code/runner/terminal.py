@@ -50,7 +50,7 @@ class TerminalUI:
         """Create a renderer bound to standard error."""
         return cls(Console(stderr=True, theme=_THEME, highlight=False))
 
-    def home(self) -> None:
+    def home(self, *, dev_mode: bool = False) -> None:
         """Show the terminal launchpad when no command is supplied."""
         commands = Table.grid(padding=(0, 3))
         commands.add_column(style="accent", no_wrap=True)
@@ -63,10 +63,16 @@ class TerminalUI:
         commands.add_row("sandbox build", "Prepare the local execution capsule")
         commands.add_row("sandbox doctor", "Verify capsule isolation and readiness")
         commands.add_row("session list", "Inspect saved terminal sessions")
+        if dev_mode:
+            commands.add_row("infra create", "Provision disposable GCP infrastructure")
+            commands.add_row("sandbox connect", "Connect the capsule to an infra ID")
         self.console.print(
             Panel(
                 Group(
-                    Text("VERISENTINEL", style="accent"),
+                    Text(
+                        "VERISENTINEL DEV" if dev_mode else "VERISENTINEL",
+                        style="accent",
+                    ),
                     Text(
                         "Authorization analysis · coverage validation · "
                         "controlled simulation",
@@ -82,9 +88,17 @@ class TerminalUI:
             )
         )
 
-    def shell_started(self, session: ShellSession, *, resumed: bool) -> None:
+    def shell_started(
+        self,
+        session: ShellSession,
+        *,
+        resumed: bool,
+        dev_mode: bool = False,
+    ) -> None:
         """Render the compact header for an interactive terminal workspace."""
         state = "RESUMED" if resumed else "NEW SESSION"
+        if dev_mode:
+            state = f"DEV · {state}"
         content = Group(
             self._heading("VERISENTINEL", state, "success"),
             Text(session.session_id, style="muted"),
@@ -110,7 +124,7 @@ class TerminalUI:
         """Read one interactive command from the terminal."""
         return self.console.input(prompt)
 
-    def shell_help(self) -> None:
+    def shell_help(self, *, dev_mode: bool = False) -> None:
         """Render command and slash-command guidance inside the shell."""
         commands = Table.grid(padding=(0, 3))
         commands.add_column(style="accent", no_wrap=True)
@@ -121,6 +135,10 @@ class TerminalUI:
         commands.add_row("validate scenario PATH", "Validate a scenario file")
         commands.add_row("run scenario PATH …", "Start the approval-gated workflow")
         commands.add_row("session list", "List terminal sessions")
+        if dev_mode:
+            commands.add_row("infra create …", "Provision a disposable GCP target")
+            commands.add_row("infra list", "List development infrastructure")
+            commands.add_row("sandbox connect ID", "Select a target for approved actions")
 
         slash = Table.grid(padding=(0, 3))
         slash.add_column(style="accent", no_wrap=True)

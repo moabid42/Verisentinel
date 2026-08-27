@@ -378,13 +378,30 @@ def test_no_arguments_opens_shell_only_for_interactive_terminal(
     monkeypatch.setattr(
         cli_module,
         "_run_shell",
-        lambda session_id=None: calls.append(session_id),
+        lambda session_id=None, *, dev_mode=False: calls.append(session_id),
     )
 
     result = CLI.invoke(app, [])
 
     assert result.exit_code == 0
     assert calls == [None]
+
+
+def test_dev_option_opens_development_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(cli_module, "_interactive_terminal", lambda: True)
+    monkeypatch.setattr(
+        cli_module,
+        "_run_shell",
+        lambda session_id=None, *, dev_mode=False: calls.append(dev_mode),
+    )
+
+    result = CLI.invoke(app, ["--dev"])
+
+    assert result.exit_code == 0
+    assert calls == [True]
 
 
 def test_run_routes_validated_input_to_application_service(

@@ -3,6 +3,10 @@ objective: Evaluate unmonitored paths available to the starting service account
 operator: human-operator@example.com
 target_scope: projects/replace-with-authorized-sandbox-project
 
+# Canonical remote resource prepared for this controlled scenario.
+infrastructure:
+  path: projects/replace-with-authorized-sandbox-project/buckets/replace-with-bucket
+
 starting_service_account:
   identity: starting-service-account@replace-with-project.iam.gserviceaccount.com
   credential_ref: run/default

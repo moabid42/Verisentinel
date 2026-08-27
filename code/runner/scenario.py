@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -13,6 +14,28 @@ class ScenarioError(ValueError):
     """A scenario is missing or invalid without exposing its secret values."""
 
 
+_SERVICE_ACCOUNT_PATTERN = re.compile(
+    r"^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$"
+)
+
+
+class InfrastructureTarget(ImmutableModel):
+    """Remote infrastructure selected by one scenario."""
+
+    path: str = Field(min_length=1, max_length=512)
+
+    @field_validator("path")
+    @classmethod
+    def path_is_canonical(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parts = normalized.split("/")
+        if not normalized.startswith("projects/"):
+            raise ValueError("path must start with projects/")
+        if "//" in normalized or any(part in {".", ".."} for part in parts):
+            raise ValueError("path must be a canonical GCP resource name")
+        return normalized
+
+
 class StartingServiceAccount(ImmutableModel):
     identity: str = Field(min_length=1)
     credential_ref: str = Field(
@@ -21,6 +44,14 @@ class StartingServiceAccount(ImmutableModel):
         pattern=CREDENTIAL_REFERENCE_PATTERN,
     )
     permissions: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("identity")
+    @classmethod
+    def identity_is_service_account(cls, value: str) -> str:
+        normalized = value.strip()
+        if _SERVICE_ACCOUNT_PATTERN.fullmatch(normalized) is None:
+            raise ValueError("identity must be a service account principal")
+        return normalized
 
     @field_validator("permissions")
     @classmethod
@@ -69,6 +100,7 @@ class PlannerScenario(ImmutableModel):
     objective: str = Field(min_length=1)
     operator: str = Field(min_length=1)
     target_scope: str = Field(min_length=1)
+    infrastructure: InfrastructureTarget
     starting_service_account: StartingServiceAccount
     detections: DetectionProfile = Field(default_factory=DetectionProfile)
     model: ModelSettings = Field(default_factory=ModelSettings)

@@ -34,6 +34,8 @@ def write_scenario(path: Path, credential_ref: str = "run/default") -> None:
 objective: Evaluate storage paths
 operator: human@example.test
 target_scope: projects/security-sandbox
+infrastructure:
+  path: projects/security-sandbox/buckets/scenario-target
 starting_service_account:
   identity: start@security-sandbox.iam.gserviceaccount.com
   credential_ref: {credential_ref}
@@ -80,6 +82,9 @@ def test_scenario_loads_opaque_credential_reference(tmp_path: Path) -> None:
     scenario = load_scenario(path)
 
     assert scenario.starting_service_account.credential_ref == "run/default"
+    assert scenario.infrastructure.path == (
+        "projects/security-sandbox/buckets/scenario-target"
+    )
     assert scenario.model_dump(mode="json")["starting_service_account"] == {
         "identity": "start@security-sandbox.iam.gserviceaccount.com",
         "credential_ref": "run/default",
@@ -94,6 +99,8 @@ def test_scenario_rejects_embedded_access_token(tmp_path: Path) -> None:
 objective: Evaluate storage paths
 operator: human@example.test
 target_scope: projects/security-sandbox
+infrastructure:
+  path: projects/security-sandbox/buckets/scenario-target
 starting_service_account:
   identity: start@security-sandbox.iam.gserviceaccount.com
   credential_ref: run/default
@@ -116,6 +123,8 @@ def test_scenario_requires_credential_reference(tmp_path: Path) -> None:
 objective: Evaluate storage paths
 operator: human@example.test
 target_scope: projects/security-sandbox
+infrastructure:
+  path: projects/security-sandbox/buckets/scenario-target
 starting_service_account:
   identity: start@security-sandbox.iam.gserviceaccount.com
   permissions:
@@ -125,6 +134,32 @@ starting_service_account:
     )
 
     with pytest.raises(ScenarioError, match="credential_ref"):
+        load_scenario(path)
+
+
+def test_scenario_requires_canonical_infrastructure_path(tmp_path: Path) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+    document = path.read_text(encoding="utf-8").replace(
+        "projects/security-sandbox/buckets/scenario-target",
+        "https://storage.googleapis.com/scenario-target",
+    )
+    path.write_text(document, encoding="utf-8")
+
+    with pytest.raises(ScenarioError, match="infrastructure.path"):
+        load_scenario(path)
+
+
+def test_scenario_requires_service_account_starting_identity(tmp_path: Path) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+    document = path.read_text(encoding="utf-8").replace(
+        "start@security-sandbox.iam.gserviceaccount.com",
+        "human@example.test",
+    )
+    path.write_text(document, encoding="utf-8")
+
+    with pytest.raises(ScenarioError, match="starting_service_account.identity"):
         load_scenario(path)
 
 

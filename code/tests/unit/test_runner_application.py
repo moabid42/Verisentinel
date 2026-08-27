@@ -94,6 +94,8 @@ def test_scenario_validation_returns_validated_model(tmp_path: Path) -> None:
 objective: Evaluate one path
 operator: operator@example.test
 target_scope: projects/authorized-project
+infrastructure:
+  path: projects/authorized-project/buckets/scenario-target
 starting_service_account:
   identity: runner@authorized-project.iam.gserviceaccount.com
   credential_ref: run/default

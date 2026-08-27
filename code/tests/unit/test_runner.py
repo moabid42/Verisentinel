@@ -20,6 +20,8 @@ from execution.capsule.setup import CapsuleBuildReport
 from execution.credentials import CredentialInspection, CredentialSourceKind
 from runner.application import CorpusStatus, PlannerRunRequest
 from runner.cli import app, main
+from runner.connection import ConnectionMode, SandboxConnection
+from runner.infrastructure import DevelopmentInfrastructure
 from runner.scenario import ScenarioError, load_scenario
 from runner.session import ShellSessionRepository
 from runner.terminal import TerminalUI, parse_choice
@@ -192,7 +194,13 @@ def test_top_level_and_nested_help_are_stable(
         ("corpus", "status", "--help"),
         ("sandbox", "--help"),
         ("sandbox", "build", "--help"),
+        ("sandbox", "connect", "--help"),
         ("sandbox", "doctor", "--help"),
+        ("sandbox", "status", "--help"),
+        ("infra", "--help"),
+        ("infra", "create", "--help"),
+        ("infra", "list", "--help"),
+        ("infra", "show", "--help"),
         ("session", "--help"),
         ("session", "list", "--help"),
         ("session", "show", "--help"),
@@ -359,6 +367,124 @@ def test_sandbox_build_reports_prepared_resources(
     assert "SANDBOX  BUILT" in result.stdout
     assert "Network state" in result.stdout
     assert "created" in result.stdout
+
+
+def test_infrastructure_commands_require_dev_mode() -> None:
+    result = CLI.invoke(app, ["infra", "list"])
+
+    assert result.exit_code == 2
+    assert "DEVELOPMENT MODE REQUIRED" in result.output
+
+
+def test_dev_infrastructure_create_uses_adc_and_scenario(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+    calls: list[tuple[str, CredentialSourceKind, str]] = []
+    record = DevelopmentInfrastructure(
+        infrastructure_id="infra_" + "1" * 32,
+        path="projects/security-sandbox/buckets/scenario-target",
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal="start@security-sandbox.iam.gserviceaccount.com",
+        created_by="operator@example.test",
+    )
+
+    class Service:
+        def create(self, scenario, source, *, location):
+            calls.append((scenario.name, source.kind, location))
+            return record
+
+    monkeypatch.setattr(cli_module, "_infrastructure_service", Service)
+
+    result = CLI.invoke(
+        app,
+        ["--dev", "infra", "create", "--scenario", str(path)],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("test-scenario", CredentialSourceKind.ADC, "EU")]
+    assert record.infrastructure_id in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_kind", "expected_mode", "expected_id"),
+    [
+        (
+            ["sandbox", "connect"],
+            CredentialSourceKind.STDIN,
+            False,
+            None,
+        ),
+        (
+            ["--dev", "sandbox", "connect", "infra_" + "2" * 32],
+            CredentialSourceKind.IMPERSONATE,
+            True,
+            "infra_" + "2" * 32,
+        ),
+    ],
+)
+def test_sandbox_connect_selects_safe_mode_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    arguments: list[str],
+    expected_kind: CredentialSourceKind,
+    expected_mode: bool,
+    expected_id: str | None,
+) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+    calls = []
+    connection = SandboxConnection(
+        connection_id="connection_" + "3" * 32,
+        mode=(
+            ConnectionMode.DEVELOPMENT
+            if expected_mode
+            else ConnectionMode.REMOTE
+        ),
+        infrastructure_id=expected_id,
+        infrastructure_path="projects/security-sandbox/buckets/scenario-target",
+        scenario_name="test-scenario",
+        principal="start@security-sandbox.iam.gserviceaccount.com",
+        credential_ref="run/default",
+        source_kind=expected_kind,
+    )
+
+    class Service:
+        def connect(
+            self,
+            scenario,
+            source,
+            *,
+            development_mode,
+            infrastructure_id,
+        ):
+            calls.append(
+                (
+                    scenario.name,
+                    source.kind,
+                    source.locator,
+                    development_mode,
+                    infrastructure_id,
+                )
+            )
+            return connection
+
+    monkeypatch.setattr(cli_module, "_connection_service", Service)
+
+    result = CLI.invoke(
+        app,
+        [*arguments, "--scenario", str(path)],
+    )
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "test-scenario"
+    assert calls[0][1] == expected_kind
+    assert calls[0][3:] == (expected_mode, expected_id)
+    assert "CONNECTED" in result.stdout
 
 
 def test_session_routes_render_persisted_metadata(

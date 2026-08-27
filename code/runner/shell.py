@@ -14,7 +14,8 @@ _TOP_LEVEL_COMMANDS = frozenset(
 _KNOWN_SUBCOMMANDS: dict[str, frozenset[str]] = {
     "auth": frozenset({"inspect"}),
     "corpus": frozenset({"build", "status"}),
-    "sandbox": frozenset({"build", "doctor"}),
+    "infra": frozenset({"create", "list", "show"}),
+    "sandbox": frozenset({"build", "connect", "doctor", "status"}),
     "scenario": frozenset({"run", "validate"}),
     "session": frozenset({"list", "resume", "show"}),
 }

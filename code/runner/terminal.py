@@ -14,6 +14,8 @@ from rich.theme import Theme
 from core.models import CandidateCard, DecisionKind
 from execution.capsule.doctor import CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
+from runner.connection import SandboxConnection
+from runner.infrastructure import DevelopmentInfrastructure
 from runner.session import ShellSession
 
 _THEME = Theme(
@@ -62,10 +64,12 @@ class TerminalUI:
         commands.add_row("corpus status", "Inspect the current corpus")
         commands.add_row("sandbox build", "Prepare the local execution capsule")
         commands.add_row("sandbox doctor", "Verify capsule isolation and readiness")
+        commands.add_row("sandbox connect", "Connect to the scenario infrastructure")
+        commands.add_row("sandbox status", "Inspect the active connection")
         commands.add_row("session list", "Inspect saved terminal sessions")
         if dev_mode:
             commands.add_row("infra create", "Provision disposable GCP infrastructure")
-            commands.add_row("sandbox connect", "Connect the capsule to an infra ID")
+            commands.add_row("sandbox connect ID", "Connect the capsule to an infra ID")
         self.console.print(
             Panel(
                 Group(
@@ -74,8 +78,7 @@ class TerminalUI:
                         style="accent",
                     ),
                     Text(
-                        "Authorization analysis · coverage validation · "
-                        "controlled simulation",
+                        "Authorization analysis · coverage validation · controlled simulation",
                         style="muted",
                     ),
                     Text(""),
@@ -136,9 +139,21 @@ class TerminalUI:
         commands.add_row("run scenario PATH …", "Start the approval-gated workflow")
         commands.add_row("session list", "List terminal sessions")
         if dev_mode:
-            commands.add_row("infra create …", "Provision a disposable GCP target")
+            commands.add_row(
+                "infra create --scenario PATH",
+                "Provision a disposable GCP target",
+            )
             commands.add_row("infra list", "List development infrastructure")
-            commands.add_row("sandbox connect ID", "Select a target for approved actions")
+            commands.add_row(
+                "sandbox connect ID --scenario PATH",
+                "Verify the scenario user and select its target",
+            )
+        else:
+            commands.add_row(
+                "sandbox connect --scenario PATH",
+                "Read a service-account token securely from stdin",
+            )
+        commands.add_row("sandbox status", "Inspect the active connection")
 
         slash = Table.grid(padding=(0, 3))
         slash.add_column(style="accent", no_wrap=True)
@@ -186,8 +201,7 @@ class TerminalUI:
     def shell_closed(self, session: ShellSession) -> None:
         """Render a compact saved-session confirmation."""
         self.console.print(
-            f"[muted]Session {session.session_id} saved · "
-            f"{session.command_count} commands[/muted]"
+            f"[muted]Session {session.session_id} saved · {session.command_count} commands[/muted]"
         )
 
     def clear(self) -> None:
@@ -293,6 +307,91 @@ class TerminalUI:
                     table,
                 ),
                 border_style="green" if report.available else "yellow",
+                padding=(1, 1),
+            )
+        )
+
+    def sandbox_connection(self, connection: SandboxConnection) -> None:
+        """Render a newly verified sandbox connection."""
+        self._key_values(
+            "SANDBOX",
+            (
+                ("Connection", connection.connection_id),
+                ("Mode", connection.mode.value),
+                ("Infrastructure", connection.infrastructure_path),
+                ("Principal", connection.principal),
+                ("Credential", connection.source_kind.value),
+            ),
+            state="CONNECTED",
+            state_style="success",
+        )
+
+    def sandbox_connection_status(
+        self,
+        connection: SandboxConnection | None,
+    ) -> None:
+        """Render the active connection without credential material."""
+        if connection is None:
+            self._key_values(
+                "SANDBOX",
+                (("Next", "Run verisentinel sandbox connect --scenario PATH"),),
+                state="DISCONNECTED",
+                state_style="warning",
+            )
+            return
+        self.sandbox_connection(connection)
+
+    def infrastructure_created(
+        self,
+        infrastructure: DevelopmentInfrastructure,
+    ) -> None:
+        """Render a disposable development target."""
+        self._key_values(
+            "INFRASTRUCTURE",
+            (
+                ("ID", infrastructure.infrastructure_id),
+                ("Path", infrastructure.path),
+                ("Location", infrastructure.location),
+                ("Scenario user", infrastructure.starting_principal),
+                ("Created by", infrastructure.created_by),
+                (
+                    "Next",
+                    f"Run sandbox connect {infrastructure.infrastructure_id}",
+                ),
+            ),
+            state="READY",
+            state_style="success",
+        )
+
+    def infrastructure_list(
+        self,
+        records: tuple[DevelopmentInfrastructure, ...],
+    ) -> None:
+        """Render development targets from newest to oldest."""
+        if not records:
+            self._key_values(
+                "INFRASTRUCTURE",
+                (("Next", "Run infra create --scenario PATH"),),
+                state="EMPTY",
+                state_style="muted",
+            )
+            return
+        table = Table(box=None, expand=True, padding=(0, 1))
+        table.add_column("ID", style="accent", no_wrap=True)
+        table.add_column("PATH")
+        table.add_column("PRINCIPAL")
+        for record in records:
+            table.add_row(
+                record.infrastructure_id,
+                record.path,
+                record.starting_principal,
+            )
+        self.console.print(
+            Panel(
+                table,
+                title="[accent]INFRASTRUCTURE[/accent]",
+                title_align="left",
+                border_style="cyan",
                 padding=(1, 1),
             )
         )

@@ -24,7 +24,12 @@ from runner.application import (
     run_planner,
     validate_scenario,
 )
-from runner.scenario import ScenarioError
+from runner.connection import (
+    SandboxConnectionRepository,
+    SandboxConnectionService,
+)
+from runner.infrastructure import InfrastructureRepository, InfrastructureService
+from runner.scenario import ScenarioError, load_scenario
 from runner.session import ShellSessionRepository
 from runner.shell import InteractiveShell
 from runner.terminal import TerminalUI
@@ -61,12 +66,18 @@ session_app = typer.Typer(
     no_args_is_help=True,
     **_APP_SETTINGS,
 )
+infra_app = typer.Typer(
+    help="Provision disposable development infrastructure.",
+    no_args_is_help=True,
+    **_APP_SETTINGS,
+)
 
 app.add_typer(scenario_app, name="scenario")
 app.add_typer(auth_app, name="auth")
 app.add_typer(corpus_app, name="corpus")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(session_app, name="session")
+app.add_typer(infra_app, name="infra")
 
 
 @app.callback(invoke_without_command=True)
@@ -211,6 +222,127 @@ def sandbox_build() -> None:
     """Build the locked capsule image and prepare its private network."""
     report = _invoke(build_sandbox)
     TerminalUI().sandbox_build(report)
+
+
+@sandbox_app.command("connect")
+def sandbox_connect(
+    context: typer.Context,
+    infrastructure_id: Annotated[
+        str | None,
+        typer.Argument(help="Development infrastructure ID; accepted only with --dev."),
+    ] = None,
+    scenario_path: Annotated[
+        Path,
+        typer.Option(
+            "--scenario",
+            metavar="PATH",
+            help="Scenario that declares the remote path and starting user.",
+        ),
+    ] = Path("scenario.yaml"),
+    credential_source: Annotated[
+        str | None,
+        typer.Option(
+            "--credential-source",
+            metavar="SOURCE",
+            help=(
+                "Credential source. Defaults to scenario-user impersonation in "
+                "development mode and a hidden stdin token otherwise."
+            ),
+        ),
+    ] = None,
+) -> None:
+    """Verify a scenario user and activate its remote infrastructure."""
+    development_mode = _dev_mode(context)
+    scenario = _invoke(
+        lambda: load_scenario(scenario_path.expanduser().resolve()),
+        input_errors=(ScenarioError,),
+    )
+    source_value = credential_source or (
+        f"impersonate:{scenario.starting_service_account.identity}" if development_mode else "stdin"
+    )
+    source = _invoke(
+        lambda: parse_credential_source(source_value),
+        input_errors=(CredentialSourceError,),
+        input_message="Credential source is unsupported or invalid.",
+    )
+    connection = _invoke(
+        lambda: _connection_service().connect(
+            scenario,
+            source,
+            development_mode=development_mode,
+            infrastructure_id=infrastructure_id,
+        ),
+        input_errors=(ValueError,),
+    )
+    TerminalUI().sandbox_connection(connection)
+
+
+@sandbox_app.command("status")
+def sandbox_status() -> None:
+    """Show the active non-sensitive infrastructure connection."""
+    connection = _invoke(_connection_repository().optional_active)
+    TerminalUI().sandbox_connection_status(connection)
+
+
+@infra_app.command("create")
+def infrastructure_create(
+    context: typer.Context,
+    scenario_path: Annotated[
+        Path,
+        typer.Option(
+            "--scenario",
+            metavar="PATH",
+            help="Scenario that declares the bucket path and starting user.",
+        ),
+    ] = Path("scenario.yaml"),
+    location: Annotated[
+        str,
+        typer.Option(
+            "--location",
+            metavar="REGION",
+            help="Cloud Storage location for the disposable target.",
+        ),
+    ] = "EU",
+) -> None:
+    """Create a private scenario target using gcloud ADC."""
+    _require_dev(context)
+    scenario = _invoke(
+        lambda: load_scenario(scenario_path.expanduser().resolve()),
+        input_errors=(ScenarioError,),
+    )
+    source = parse_credential_source("adc")
+    infrastructure = _invoke(
+        lambda: _infrastructure_service().create(
+            scenario,
+            source,
+            location=location,
+        )
+    )
+    TerminalUI().infrastructure_created(infrastructure)
+
+
+@infra_app.command("list")
+def infrastructure_list(context: typer.Context) -> None:
+    """List development infrastructure known to this workspace."""
+    _require_dev(context)
+    TerminalUI().infrastructure_list(_invoke(_infrastructure_repository().list))
+
+
+@infra_app.command("show")
+def infrastructure_show(
+    context: typer.Context,
+    infrastructure_id: Annotated[
+        str,
+        typer.Argument(help="Opaque development infrastructure ID."),
+    ],
+) -> None:
+    """Show one non-sensitive development infrastructure record."""
+    _require_dev(context)
+    infrastructure = _invoke(
+        lambda: _infrastructure_repository().get(infrastructure_id),
+        input_errors=(NotFoundError, ValueError),
+    )
+    TerminalUI().infrastructure_created(infrastructure)
 
 
 @session_app.command("list")
@@ -365,6 +497,25 @@ def _session_repository() -> ShellSessionRepository:
     return ShellSessionRepository(Paths().runtime / "shell" / "sessions")
 
 
+def _infrastructure_repository() -> InfrastructureRepository:
+    return InfrastructureRepository(Paths().runtime / "infrastructure")
+
+
+def _infrastructure_service() -> InfrastructureService:
+    return InfrastructureService(_infrastructure_repository())
+
+
+def _connection_repository() -> SandboxConnectionRepository:
+    return SandboxConnectionRepository(Paths().runtime / "sandbox" / "connection")
+
+
+def _connection_service() -> SandboxConnectionService:
+    return SandboxConnectionService(
+        _connection_repository(),
+        infrastructure=_infrastructure_repository(),
+    )
+
+
 def _run_shell(
     resume_session_id: str | None = None,
     *,
@@ -390,6 +541,15 @@ def _interactive_terminal() -> bool:
 
 def _dev_mode(context: typer.Context) -> bool:
     return bool(context.find_root().params.get("dev", False))
+
+
+def _require_dev(context: typer.Context) -> None:
+    if not _dev_mode(context):
+        TerminalUI.errors().error(
+            "DEVELOPMENT MODE REQUIRED",
+            "Restart with python3 run.py --dev before managing infrastructure.",
+        )
+        raise typer.Exit(2)
 
 
 def _bounded(value: str) -> str:

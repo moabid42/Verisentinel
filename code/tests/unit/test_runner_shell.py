@@ -42,6 +42,7 @@ def test_shell_dispatches_natural_commands_and_saves_session(tmp_path: Path) -> 
         reader=ScriptedReader(
             "build sandbox",
             "run scenario scenario.yaml --credential-source env:SENSITIVE_NAME",
+            "auth SENSITIVE_SUBCOMMAND",
             "/history",
             "/exit",
         ),
@@ -59,14 +60,17 @@ def test_shell_dispatches_natural_commands_and_saves_session(tmp_path: Path) -> 
             "--credential-source",
             "env:SENSITIVE_NAME",
         ],
+        ["auth", "SENSITIVE_SUBCOMMAND"],
     ]
     session = repository.list()[0]
     assert session.status == ShellSessionStatus.CLOSED
     assert [event.operation for event in session.events] == [
         "sandbox build",
         "scenario run",
+        "auth",
     ]
     assert "SENSITIVE_NAME" not in session.model_dump_json()
+    assert "SENSITIVE_SUBCOMMAND" not in session.model_dump_json()
     assert "scenario run" in stream.getvalue()
 
 

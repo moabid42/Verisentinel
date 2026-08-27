@@ -11,6 +11,13 @@ from runner.terminal import TerminalUI
 _TOP_LEVEL_COMMANDS = frozenset(
     {"auth", "corpus", "run", "sandbox", "scenario", "session"}
 )
+_KNOWN_SUBCOMMANDS: dict[str, frozenset[str]] = {
+    "auth": frozenset({"inspect"}),
+    "corpus": frozenset({"build", "status"}),
+    "sandbox": frozenset({"build", "doctor"}),
+    "scenario": frozenset({"run", "validate"}),
+    "session": frozenset({"list", "resume", "show"}),
+}
 _COMMAND_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("build", "corpus"): ("corpus", "build"),
     ("build", "sandbox"): ("sandbox", "build"),
@@ -153,5 +160,8 @@ def normalize_shell_command(raw: str) -> list[str]:
 
 
 def _operation_name(arguments: list[str]) -> str:
-    width = 2 if len(arguments) > 1 and not arguments[1].startswith("-") else 1
-    return " ".join(argument.lower() for argument in arguments[:width])
+    command = arguments[0].lower()
+    subcommand = arguments[1].lower() if len(arguments) > 1 else ""
+    if subcommand in _KNOWN_SUBCOMMANDS.get(command, frozenset()):
+        return f"{command} {subcommand}"
+    return command

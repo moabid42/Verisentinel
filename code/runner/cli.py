@@ -17,10 +17,12 @@ from runner.application import (
     CorpusStatus,
     PlannerConfigurationError,
     PlannerRunRequest,
+    analyse_connected_environment,
     build_corpus,
     build_sandbox,
     inspect_authentication,
     inspect_sandbox,
+    read_connected_environment,
     read_corpus_status,
     run_planner,
     validate_scenario,
@@ -72,6 +74,11 @@ infra_app = typer.Typer(
     no_args_is_help=True,
     **_APP_SETTINGS,
 )
+environment_app = typer.Typer(
+    help="Inspect and analyse the connected service-account environment.",
+    no_args_is_help=True,
+    **_APP_SETTINGS,
+)
 
 app.add_typer(scenario_app, name="scenario")
 app.add_typer(auth_app, name="auth")
@@ -79,6 +86,7 @@ app.add_typer(corpus_app, name="corpus")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(session_app, name="session")
 app.add_typer(infra_app, name="infra")
+app.add_typer(environment_app, name="env")
 
 
 @app.callback(invoke_without_command=True)
@@ -306,6 +314,64 @@ def sandbox_status() -> None:
     """Show the active non-sensitive infrastructure connection."""
     connection = _invoke(_connection_repository().optional_active)
     TerminalUI().sandbox_connection_status(connection)
+
+
+@environment_app.command("show")
+def environment_show() -> None:
+    """Show permissions and state for the connected service account."""
+    environment = _invoke(
+        read_connected_environment,
+        input_errors=(ScenarioError,),
+    )
+    TerminalUI().connected_environment(environment)
+
+
+@environment_app.command("analyse")
+def environment_analyse(
+    credential_source: Annotated[
+        str | None,
+        typer.Option(
+            "--credential-source",
+            metavar="SOURCE",
+            help=(
+                "Override the connected source. Development impersonation is "
+                "reconstructed automatically."
+            ),
+        ),
+    ] = None,
+    rebuild_snapshot: Annotated[
+        bool,
+        typer.Option(
+            "--rebuild-snapshot",
+            help="Rebuild the configured corpus before analysis.",
+        ),
+    ] = False,
+    quiet_trace: Annotated[
+        bool,
+        typer.Option(
+            "--quiet-trace",
+            help="Do not echo trace event names to standard error.",
+        ),
+    ] = False,
+) -> None:
+    """Run validated proposals and request explicit operator decisions."""
+    source = None
+    if credential_source is not None:
+        source = _invoke(
+            lambda: parse_credential_source(credential_source),
+            input_errors=(CredentialSourceError,),
+            input_message="Credential source is unsupported or invalid.",
+        )
+    exit_code = _invoke(
+        lambda: analyse_connected_environment(
+            credential_source=source,
+            rebuild_snapshot=rebuild_snapshot,
+            quiet_trace=quiet_trace,
+        ),
+        input_errors=(ScenarioError, PlannerConfigurationError),
+    )
+    if exit_code:
+        raise typer.Exit(exit_code)
 
 
 @infra_app.command("create")
@@ -625,6 +691,7 @@ def _run_shell(
         repository=_session_repository(),
         executor=executor,
         dev_mode=dev_mode,
+        sandbox_context_loader=_connection_repository().optional_active,
     )
     _invoke(
         lambda: shell.run(resume_session_id),

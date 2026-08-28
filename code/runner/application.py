@@ -21,16 +21,19 @@ from core.models import (
     OperatorDecision,
 )
 from core.tracing import DebugTrace
+from environment.repository import EnvironmentRepository
 from execution.capsule.doctor import CapsuleDoctor, CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuilder, CapsuleBuildReport
 from execution.credentials import (
     CredentialInspection,
     CredentialResolver,
     CredentialSource,
+    CredentialSourceKind,
 )
 from execution.gateway.manager import GatewayBuilder, GatewayBuildReport, GatewayManager
 from execution.service import ExecutionService
 from green_agent.orchestrator import GreenAgent
+from green_agent.repository import GreenAgentRepository
 from ingestion.models import BuildSnapshotRequest
 from ingestion.service import IngestorService
 from ingestion.snapshot import SnapshotRepository
@@ -91,6 +94,29 @@ class CorpusStatus:
     permission_count: int = 0
     detection_count: int = 0
     technique_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectedEnvironment:
+    """Non-sensitive current state for the active sandbox identity."""
+
+    connection_id: str
+    infrastructure_id: str | None
+    scenario_name: str
+    objective: str
+    identity: str
+    target_scope: str
+    infrastructure_path: str
+    credential_ref: str
+    source_kind: str
+    permissions: tuple[str, ...]
+    detection_sources: tuple[str, ...]
+    engagement_id: str | None = None
+    engagement_status: str | None = None
+    state_version: str | None = None
+    discovered_resources: tuple[str, ...] = ()
+    capabilities: tuple[str, ...] = ()
+    completed_actions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +182,102 @@ def build_sandbox(
         network=report.network,
         network_created=report.network_created,
         gateway_image=gateway.image,
+    )
+
+
+def read_connected_environment(
+    *,
+    paths: Paths | None = None,
+) -> ConnectedEnvironment:
+    """Read scenario and current Environment Brain state for the connection."""
+    paths = paths or Paths()
+    connection, scenario = _connected_scenario(paths)
+    permissions = scenario.starting_service_account.permissions
+    engagement_status: str | None = None
+    state_version: str | None = None
+    discovered_resources: tuple[str, ...] = ()
+    capabilities: tuple[str, ...] = ()
+    completed_actions: tuple[str, ...] = ()
+    if connection.engagement_id is not None:
+        try:
+            environment = EnvironmentRepository(
+                paths.runtime / "environment"
+            ).current(connection.engagement_id)
+            matrix = SnapshotRepository(paths.artifacts / "snapshots").get(
+                environment.matrix_version
+            )
+            vectors = tuple(
+                vector
+                for vector in environment.identities.values()
+                if vector.identity == connection.principal
+                and vector.scope == scenario.target_scope
+            )
+            if len(vectors) != 1:
+                raise PlannerConfigurationError(
+                    "connected identity has no unambiguous environment state"
+                )
+            permissions = tuple(
+                matrix.permissions[index] for index in vectors[0].permission_indices
+            )
+            state_version = environment.state_version
+            discovered_resources = environment.discovered_resources
+            capabilities = environment.capabilities
+            completed_actions = environment.completed_actions
+            engagement_status = GreenAgentRepository(
+                paths.runtime / "green-agent"
+            ).get(connection.engagement_id).status.value
+        except NotFoundError:
+            pass
+    return ConnectedEnvironment(
+        connection_id=connection.connection_id,
+        infrastructure_id=connection.infrastructure_id,
+        scenario_name=scenario.name,
+        objective=scenario.objective,
+        identity=connection.principal,
+        target_scope=scenario.target_scope,
+        infrastructure_path=connection.infrastructure_path,
+        credential_ref=connection.credential_ref,
+        source_kind=connection.source_kind.value,
+        permissions=permissions,
+        detection_sources=scenario.detections.sources,
+        engagement_id=connection.engagement_id,
+        engagement_status=engagement_status,
+        state_version=state_version,
+        discovered_resources=discovered_resources,
+        capabilities=capabilities,
+        completed_actions=completed_actions,
+    )
+
+
+def analyse_connected_environment(
+    *,
+    credential_source: CredentialSource | None = None,
+    rebuild_snapshot: bool = False,
+    quiet_trace: bool = False,
+    paths: Paths | None = None,
+) -> int:
+    """Run the guarded proposer and validator loop for the active sandbox."""
+    paths = paths or Paths()
+    connection, _ = _connected_scenario(paths)
+    source = credential_source
+    if source is None:
+        if connection.source_kind != CredentialSourceKind.IMPERSONATE:
+            raise PlannerConfigurationError(
+                "connected credential source cannot be reconstructed; pass "
+                "--credential-source SOURCE"
+            )
+        source = CredentialSource(
+            kind=CredentialSourceKind.IMPERSONATE,
+            locator=connection.principal,
+        )
+    return run_planner(
+        PlannerRunRequest(
+            scenario_path=Path(connection.scenario_path or ""),
+            credential_source=source,
+            rebuild_snapshot=rebuild_snapshot,
+            quiet_trace=quiet_trace,
+            development_mode=connection.mode == ConnectionMode.DEVELOPMENT,
+        )
     )
 
 
@@ -266,6 +388,13 @@ def run_planner(request: PlannerRunRequest) -> int:
                 state_source=f"scenario:{scenario.name}",
             )
         )
+        SandboxConnectionRepository(
+            paths.runtime / "sandbox" / "connection"
+        ).put(
+            connection.model_copy(
+                update={"engagement_id": engagement.engagement_id}
+            )
+        )
         trace.emit(
             "runner",
             "engagement_created",
@@ -316,6 +445,40 @@ def _corpus_status(snapshot: MatrixSnapshot) -> CorpusStatus:
         detection_count=len(snapshot.detections),
         technique_count=len(snapshot.techniques),
     )
+
+
+def _connected_scenario(
+    paths: Paths,
+) -> tuple[SandboxConnection, PlannerScenario]:
+    connection = SandboxConnectionRepository(
+        paths.runtime / "sandbox" / "connection"
+    ).optional_active()
+    if connection is None:
+        raise PlannerConfigurationError(
+            "sandbox is not connected; run sandbox connect first"
+        )
+    if connection.scenario_path is None:
+        raise PlannerConfigurationError(
+            "active connection has no bound scenario; reconnect the sandbox"
+        )
+    scenario = load_scenario(Path(connection.scenario_path))
+    expected = (
+        scenario.name,
+        scenario.infrastructure.path,
+        scenario.starting_service_account.identity,
+        scenario.starting_service_account.credential_ref,
+    )
+    actual = (
+        connection.scenario_name,
+        connection.infrastructure_path,
+        connection.principal,
+        connection.credential_ref,
+    )
+    if actual != expected:
+        raise PlannerConfigurationError(
+            "active sandbox connection does not match its bound scenario"
+        )
+    return connection, scenario
 
 
 def _require_sandbox_connection(

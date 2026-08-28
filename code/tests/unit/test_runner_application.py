@@ -5,6 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
+import runner.application as application_module
+from core.config import Paths
 from core.models import MatrixSnapshot
 from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
@@ -15,12 +19,19 @@ from execution.credentials import (
     parse_credential_source,
 )
 from runner.application import (
+    analyse_connected_environment,
     build_corpus,
     build_sandbox,
     inspect_authentication,
     inspect_sandbox,
+    read_connected_environment,
     read_corpus_status,
     validate_scenario,
+)
+from runner.connection import (
+    ConnectionMode,
+    SandboxConnection,
+    SandboxConnectionRepository,
 )
 
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
@@ -155,3 +166,83 @@ def test_sandbox_build_returns_prepared_resources() -> None:
 
     assert report.network == "verisentinel-capsule"
     assert report.network_created
+
+
+def _connect_test_scenario(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[Path, SandboxConnection]:
+    runtime = tmp_path / "runtime"
+    monkeypatch.setenv("IAM_PLANNER_RUNTIME", str(runtime))
+    scenario_path = tmp_path / "scenario.yaml"
+    scenario_path.write_text(
+        """name: connected-scenario
+objective: Evaluate one storage path
+operator: operator@example.test
+target_scope: projects/authorized-project
+infrastructure:
+  path: projects/authorized-project/buckets/scenario-target
+starting_service_account:
+  identity: runner@authorized-project.iam.gserviceaccount.com
+  credential_ref: run/default
+  permissions:
+    - storage.objects.create
+detections:
+  sources:
+    - sigma
+""",
+        encoding="utf-8",
+    )
+    connection = SandboxConnection(
+        connection_id="connection_" + "1" * 32,
+        mode=ConnectionMode.DEVELOPMENT,
+        infrastructure_id="infra_" + "2" * 32,
+        infrastructure_path=(
+            "projects/authorized-project/buckets/scenario-target"
+        ),
+        scenario_name="connected-scenario",
+        scenario_path=str(scenario_path),
+        principal=PRINCIPAL,
+        credential_ref="run/default",
+        source_kind=CredentialSourceKind.IMPERSONATE,
+    )
+    SandboxConnectionRepository(runtime / "sandbox" / "connection").put(
+        connection
+    )
+    return scenario_path, connection
+
+
+def test_connected_environment_shows_declared_identity_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, connection = _connect_test_scenario(monkeypatch, tmp_path)
+
+    environment = read_connected_environment(paths=Paths(repository=tmp_path))
+
+    assert environment.connection_id == connection.connection_id
+    assert environment.identity == PRINCIPAL
+    assert environment.permissions == ("storage.objects.create",)
+    assert environment.detection_sources == ("sigma",)
+    assert environment.engagement_id is None
+
+
+def test_connected_analysis_reconstructs_exact_impersonation_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scenario_path, connection = _connect_test_scenario(monkeypatch, tmp_path)
+    requests = []
+    monkeypatch.setattr(
+        application_module,
+        "run_planner",
+        lambda request: requests.append(request) or 0,
+    )
+
+    result = analyse_connected_environment(paths=Paths(repository=tmp_path))
+
+    assert result == 0
+    assert requests[0].scenario_path == scenario_path
+    assert requests[0].credential_source.kind == CredentialSourceKind.IMPERSONATE
+    assert requests[0].credential_source.locator == connection.principal
+    assert requests[0].development_mode

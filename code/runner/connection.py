@@ -49,6 +49,7 @@ class SandboxConnection(ImmutableModel):
     principal: str = Field(min_length=1, max_length=320)
     credential_ref: str = Field(min_length=1, max_length=128)
     source_kind: CredentialSourceKind
+    engagement_id: str | None = Field(default=None, max_length=128)
     connected_at: datetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")

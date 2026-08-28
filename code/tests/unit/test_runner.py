@@ -18,7 +18,7 @@ from core.tracing import DebugTrace
 from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
 from execution.credentials import CredentialInspection, CredentialSourceKind
-from runner.application import CorpusStatus, PlannerRunRequest
+from runner.application import ConnectedEnvironment, CorpusStatus, PlannerRunRequest
 from runner.cli import app, main
 from runner.connection import ConnectionMode, SandboxConnection
 from runner.infrastructure import DevelopmentInfrastructure, InfrastructureStatus
@@ -230,8 +230,13 @@ def test_top_level_and_nested_help_are_stable(
         ("sandbox", "connect", "--help"),
         ("sandbox", "doctor", "--help"),
         ("sandbox", "status", "--help"),
+        ("sandbox", "disconnect", "--help"),
+        ("env", "--help"),
+        ("env", "show", "--help"),
+        ("env", "analyse", "--help"),
         ("infra", "--help"),
         ("infra", "create", "--help"),
+        ("infra", "destroy", "--help"),
         ("infra", "list", "--help"),
         ("infra", "show", "--help"),
         ("session", "--help"),
@@ -248,6 +253,7 @@ def test_top_level_and_nested_help_are_stable(
     assert "auth" in top_level.stdout
     assert "corpus" in top_level.stdout
     assert "sandbox" in top_level.stdout
+    assert "env" in top_level.stdout
     assert "session" in top_level.stdout
     assert "shell" in top_level.stdout
     assert "run" in top_level.stdout
@@ -400,6 +406,64 @@ def test_sandbox_build_reports_prepared_resources(
     assert "SANDBOX  BUILT" in result.stdout
     assert "Network state" in result.stdout
     assert "created" in result.stdout
+
+
+def test_environment_show_renders_connected_permissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = ConnectedEnvironment(
+        connection_id="connection_" + "7" * 32,
+        infrastructure_id="infra_" + "8" * 32,
+        scenario_name="connected-scenario",
+        objective="Evaluate storage paths",
+        identity="start@security-sandbox.iam.gserviceaccount.com",
+        target_scope="projects/security-sandbox",
+        infrastructure_path=(
+            "projects/security-sandbox/buckets/scenario-target"
+        ),
+        credential_ref="run/default",
+        source_kind="impersonate",
+        permissions=("storage.objects.create",),
+        detection_sources=("sigma",),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "read_connected_environment",
+        lambda: environment,
+    )
+
+    result = CLI.invoke(app, ["env", "show"])
+
+    assert result.exit_code == 0
+    assert "ENVIRONMENT" in result.stdout
+    assert "storage.objects.create" in result.stdout
+    assert environment.identity in result.stdout
+
+
+def test_environment_analyse_routes_to_guarded_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, bool, bool]] = []
+
+    def analyse(**values):
+        calls.append(
+            (
+                values["credential_source"],
+                values["rebuild_snapshot"],
+                values["quiet_trace"],
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(cli_module, "analyse_connected_environment", analyse)
+
+    result = CLI.invoke(
+        app,
+        ["env", "analyse", "--rebuild-snapshot", "--quiet-trace"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(None, True, True)]
 
 
 def test_infrastructure_commands_require_dev_mode() -> None:

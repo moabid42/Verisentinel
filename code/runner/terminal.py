@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from rich.console import Console, Group
 from rich.padding import Padding
@@ -17,6 +18,9 @@ from execution.capsule.setup import CapsuleBuildReport
 from runner.connection import SandboxConnection
 from runner.infrastructure import DevelopmentInfrastructure
 from runner.session import ShellSession
+
+if TYPE_CHECKING:
+    from runner.application import ConnectedEnvironment
 
 _THEME = Theme(
     {
@@ -118,8 +122,15 @@ class TerminalUI:
             )
         )
 
-    def shell_prompt(self, session: ShellSession) -> str:
+    def shell_prompt(
+        self,
+        session: ShellSession,
+        sandbox: SandboxConnection | None = None,
+    ) -> str:
         """Return the styled prompt for a terminal session."""
+        if sandbox is not None:
+            identity = sandbox.principal.split("@", 1)[0]
+            return f"[success]{identity}[/success] [accent]sandbox ›[/accent] "
         short_id = session.session_id.removeprefix("session_")[:8]
         return f"[muted]{short_id}[/muted] [accent]›[/accent] "
 
@@ -127,7 +138,12 @@ class TerminalUI:
         """Read one interactive command from the terminal."""
         return self.console.input(prompt)
 
-    def shell_help(self, *, dev_mode: bool = False) -> None:
+    def shell_help(
+        self,
+        *,
+        dev_mode: bool = False,
+        sandbox_connected: bool = False,
+    ) -> None:
         """Render command and slash-command guidance inside the shell."""
         commands = Table.grid(padding=(0, 3))
         commands.add_column(style="accent", no_wrap=True)
@@ -138,6 +154,12 @@ class TerminalUI:
         commands.add_row("validate scenario PATH", "Validate a scenario file")
         commands.add_row("run scenario PATH …", "Start the approval-gated workflow")
         commands.add_row("session list", "List terminal sessions")
+        if sandbox_connected:
+            commands.add_row("env show", "Show the connected identity and state")
+            commands.add_row(
+                "env analyse",
+                "Run validated proposals and request operator decisions",
+            )
         if dev_mode:
             commands.add_row(
                 "infra create --scenario PATH",
@@ -163,6 +185,10 @@ class TerminalUI:
         slash.add_row("/sessions", "List all sessions")
         slash.add_row("/new", "Close this session and start another")
         slash.add_row("/clear", "Clear the terminal")
+        if sandbox_connected:
+            slash.add_row("/back", "Leave the sandbox prompt without disconnecting")
+        else:
+            slash.add_row("/sandbox", "Enter the active sandbox connection")
         slash.add_row("/exit", "Save and leave")
         self.console.print(
             Panel(
@@ -329,6 +355,26 @@ class TerminalUI:
             state_style="success",
         )
 
+    def sandbox_shell_entered(self, connection: SandboxConnection) -> None:
+        """Render transition into a sandbox-scoped application prompt."""
+        self._key_values(
+            "SANDBOX WORKSPACE",
+            (
+                ("Infrastructure", connection.infrastructure_id or "remote"),
+                ("Identity", connection.principal),
+                ("Commands", "env show · env analyse · /back"),
+            ),
+            state="ENTERED",
+            state_style="success",
+        )
+
+    def sandbox_shell_left(self, connection: SandboxConnection) -> None:
+        """Render return to the top-level Verisentinel prompt."""
+        self.console.print(
+            f"[muted]Left sandbox {connection.infrastructure_id or 'remote'}; "
+            "the connection remains active.[/muted]"
+        )
+
     def sandbox_connection_status(
         self,
         connection: SandboxConnection | None,
@@ -355,6 +401,39 @@ class TerminalUI:
             else "No active sandbox connection was present."
         )
         self.success("SANDBOX DISCONNECTED", detail)
+
+    def connected_environment(self, environment: ConnectedEnvironment) -> None:
+        """Render current state for the sandbox-bound service account."""
+        rows = [
+            ("Scenario", environment.scenario_name),
+            ("Objective", environment.objective),
+            ("Identity", environment.identity),
+            ("Target", environment.target_scope),
+            ("Infrastructure", environment.infrastructure_path),
+            ("Credential", environment.source_kind),
+            ("Credential ref", environment.credential_ref),
+            ("Permissions", _joined(environment.permissions)),
+            ("Detections", _joined(environment.detection_sources)),
+            ("Resources", _joined(environment.discovered_resources)),
+            ("Capabilities", _joined(environment.capabilities)),
+            ("Completed", _joined(environment.completed_actions)),
+        ]
+        if environment.infrastructure_id is not None:
+            rows.insert(1, ("Infrastructure ID", environment.infrastructure_id))
+        if environment.engagement_id is not None:
+            rows.extend(
+                (
+                    ("Engagement", environment.engagement_id),
+                    ("Engagement status", environment.engagement_status or "unknown"),
+                    ("State", environment.state_version or "unknown"),
+                )
+            )
+        self._key_values(
+            "ENVIRONMENT",
+            tuple(rows),
+            state="CONNECTED",
+            state_style="success",
+        )
 
     def infrastructure_created(
         self,

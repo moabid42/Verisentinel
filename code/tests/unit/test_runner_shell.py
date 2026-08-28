@@ -6,9 +6,13 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
+from execution.credentials import CredentialSourceKind
+from runner.connection import ConnectionMode, SandboxConnection
 from runner.session import ShellSessionRepository, ShellSessionStatus
 from runner.shell import InteractiveShell, normalize_shell_command
 from runner.terminal import TerminalUI
+
+STARTING_PRINCIPAL = "start@example.iam.gserviceaccount.com"
 
 
 class ScriptedReader:
@@ -171,3 +175,74 @@ def test_infrastructure_commands_require_development_mode(tmp_path: Path) -> Non
 
     assert not regular_calls
     assert development_calls == [["infra", "list"]]
+
+
+def test_environment_commands_require_sandbox_context(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    stream = StringIO()
+    shell = InteractiveShell(
+        repository=ShellSessionRepository(tmp_path),
+        executor=lambda arguments: calls.append(arguments) or 0,
+        terminal=terminal(stream),
+        reader=ScriptedReader("env show", "/exit"),
+    )
+
+    shell.run()
+
+    assert not calls
+    assert "env commands require a sandbox context" in stream.getvalue()
+
+
+def test_shell_enters_connected_sandbox_and_runs_environment_commands(
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    stream = StringIO()
+    context: list[SandboxConnection | None] = [None]
+    connection = SandboxConnection(
+        connection_id="connection_" + "1" * 32,
+        mode=ConnectionMode.DEVELOPMENT,
+        infrastructure_id="infra_" + "2" * 32,
+        infrastructure_path=(
+            "projects/security-sandbox/buckets/scenario-target"
+        ),
+        scenario_name="development",
+        scenario_path=str(tmp_path / "scenario.yaml"),
+        principal=STARTING_PRINCIPAL,
+        credential_ref="run/default",
+        source_kind=CredentialSourceKind.IMPERSONATE,
+    )
+
+    def execute(arguments: list[str]) -> int:
+        calls.append(arguments)
+        if arguments[:2] == ["sandbox", "connect"]:
+            context[0] = connection
+        return 0
+
+    shell = InteractiveShell(
+        repository=ShellSessionRepository(tmp_path / "sessions"),
+        executor=execute,
+        terminal=terminal(stream),
+        reader=ScriptedReader(
+            f"sandbox connect {connection.infrastructure_id}",
+            "env show",
+            "env analyse",
+            "exit",
+            "/sandbox",
+            "/exit",
+        ),
+        dev_mode=True,
+        sandbox_context_loader=lambda: context[0],
+    )
+
+    shell.run()
+
+    assert calls == [
+        ["sandbox", "connect", connection.infrastructure_id],
+        ["env", "show"],
+        ["env", "analyse"],
+    ]
+    output = stream.getvalue()
+    assert "SANDBOX WORKSPACE" in output
+    assert "Left sandbox" in output
+    assert STARTING_PRINCIPAL in output

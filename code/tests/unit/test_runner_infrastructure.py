@@ -233,6 +233,10 @@ def test_terraform_provider_keeps_token_out_of_arguments(
     )
 
     assert [call[0][2] for call in calls] == ["init", "plan", "apply", "output"]
+    assert any(
+        argument.endswith("/terraform.tfstate")
+        for argument in calls[2][0]
+    )
     assert all(ACCESS_TOKEN not in argument for command, _ in calls for argument in command)
     assert all(environment["GOOGLE_OAUTH_ACCESS_TOKEN"] == ACCESS_TOKEN for _, environment in calls)
 

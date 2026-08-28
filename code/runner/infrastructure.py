@@ -234,7 +234,14 @@ class TerraformInfrastructureProvider:
             "plan the scenario infrastructure",
         )
         self._run(
-            [*prefix, "apply", "-input=false", "-no-color", str(plan_path)],
+            [
+                *prefix,
+                "apply",
+                "-input=false",
+                "-no-color",
+                f"-state={state_path}",
+                str(plan_path),
+            ],
             environment,
             "apply the scenario infrastructure",
         )

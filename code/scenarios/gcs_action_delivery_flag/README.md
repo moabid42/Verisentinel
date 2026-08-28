@@ -22,9 +22,9 @@ demonstrates that the guarded execution path reached the scenario target.
 The scenario deliberately selects one narrow path supported by the current
 implementation:
 
-- target: `gs://verisentinel-flag-banded-charmer-485112-q5`;
+- target: `gs://verisentinel-flag-project-551b0c2b-9622-4479-b23`;
 - starting identity:
-  `verisentinel-flag-runner@banded-charmer-485112-q5.iam.gserviceaccount.com`;
+  `verisentinel-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com`;
 - effective permission: `storage.objects.create`;
 - intended registered technique:
   `unauthenticated-access:gcp-public-buckets-privilege-escalation:6`; and
@@ -40,16 +40,16 @@ Run commands from `code/`. Authenticate the operator account named in the
 scenario and refresh Application Default Credentials:
 
 ```bash
-gcloud auth login mouad.abid@lyraix.ai
-gcloud auth application-default login mouad.abid@lyraix.ai
-gcloud config set project banded-charmer-485112-q5
+gcloud auth login mouadabid2002@gmail.com
+gcloud auth application-default login mouadabid2002@gmail.com
+gcloud config set project project-551b0c2b-9622-4479-b23
 ```
 
 Create the scenario service account if it does not already exist:
 
 ```bash
 gcloud iam service-accounts create verisentinel-flag-runner \
-  --project=banded-charmer-485112-q5 \
+  --project=project-551b0c2b-9622-4479-b23 \
   --display-name='Verisentinel flag scenario runner'
 ```
 
@@ -60,9 +60,9 @@ binding when needed:
 
 ```bash
 gcloud iam service-accounts add-iam-policy-binding \
-  verisentinel-flag-runner@banded-charmer-485112-q5.iam.gserviceaccount.com \
-  --project=banded-charmer-485112-q5 \
-  --member='user:mouad.abid@lyraix.ai' \
+  verisentinel-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com \
+  --project=project-551b0c2b-9622-4479-b23 \
+  --member='user:mouadabid2002@gmail.com' \
   --role='roles/iam.serviceAccountTokenCreator'
 ```
 
@@ -107,7 +107,7 @@ Build the scenario's Sigma-only snapshot during the first run:
 .venv/bin/verisentinel --dev scenario run \
   scenarios/gcs_action_delivery_flag/scenario.yaml \
   --credential-source \
-  impersonate:verisentinel-flag-runner@banded-charmer-485112-q5.iam.gserviceaccount.com \
+  impersonate:verisentinel-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com \
   --rebuild-snapshot
 ```
 
@@ -123,7 +123,7 @@ List the action objects with the operator credential:
 
 ```bash
 gcloud storage ls \
-  gs://verisentinel-flag-banded-charmer-485112-q5/actions/
+  gs://verisentinel-flag-project-551b0c2b-9622-4479-b23/actions/
 ```
 
 Copy the object from the completed run to a temporary file, replacing the URI
@@ -131,7 +131,7 @@ with the exact object shown by the previous command:
 
 ```bash
 gcloud storage cp \
-  gs://verisentinel-flag-banded-charmer-485112-q5/actions/approval_REPLACE.json \
+  gs://verisentinel-flag-project-551b0c2b-9622-4479-b23/actions/approval_REPLACE.json \
   /tmp/verisentinel-action-envelope.json
 ```
 
@@ -154,7 +154,7 @@ the operator credential:
 
 ```bash
 gcloud storage rm --recursive \
-  gs://verisentinel-flag-banded-charmer-485112-q5
+  gs://verisentinel-flag-project-551b0c2b-9622-4479-b23
 ```
 
 This final command is destructive and should be run only after confirming the

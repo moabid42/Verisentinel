@@ -28,14 +28,14 @@ def action_envelope() -> dict[str, object]:
         "expected_capabilities": [],
         "identity": (
             "verisentinel-flag-runner@"
-            "banded-charmer-485112-q5.iam.gserviceaccount.com"
+            "project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com"
         ),
         "observed_permission_footprint": ["storage.objects.create"],
         "operation": "catalog.technique",
         "parameters": {},
         "target": (
-            "projects/banded-charmer-485112-q5/buckets/"
-            "verisentinel-flag-banded-charmer-485112-q5"
+            "projects/project-551b0c2b-9622-4479-b23/buckets/"
+            "verisentinel-flag-project-551b0c2b-9622-4479-b23"
         ),
     }
 

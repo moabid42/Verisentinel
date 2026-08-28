@@ -106,6 +106,23 @@ It verifies the resolved principal and object-creation access before persisting
 the non-sensitive connection record. Do not override it with operator ADC; a
 principal mismatch fails closed.
 
+The same workflow is available as one connected workspace:
+
+```bash
+.venv/bin/verisentinel --dev
+```
+
+```text
+infra create --scenario scenarios/gcs_action_delivery_flag/scenario.yaml
+sandbox connect infra_REPLACE_WITH_RETURNED_ID
+env show
+env analyse --rebuild-snapshot
+```
+
+The connection infers its scenario from the infrastructure record and changes
+the prompt to the scenario service-account name. `env analyse` runs the guarded
+proposal, validation, and operator-decision loop described below.
+
 ## Run and approve
 
 Build the scenario's Sigma-only snapshot during the first run:
@@ -155,24 +172,16 @@ target, another action, and invalid approval or engagement identifiers.
 
 ## Cleanup
 
-The bucket has a one-day object lifecycle, but the bucket itself is not removed
-automatically. After retaining any evidence needed for the test, delete it with
-the operator credential:
+After retaining any evidence needed for the test, disconnect and destroy the
+scenario-owned Terraform deployment using its recorded ID:
 
 ```bash
-gcloud storage rm --recursive \
-  gs://verisentinel-tf-flag-project-551b0c2b-9622-4479-b23
+.venv/bin/verisentinel sandbox disconnect
+.venv/bin/verisentinel --dev infra destroy infra_REPLACE_WITH_RETURNED_ID
 ```
 
-Then delete the scenario-owned service account if it is no longer needed:
-
-```bash
-gcloud iam service-accounts delete \
-  verisentinel-tf-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com \
-  --project=project-551b0c2b-9622-4479-b23
-```
-
-These commands are destructive and should be run only after confirming the
-exact resource names. Manual deletion also leaves the ignored local Terraform
-state stale; remove that generated deployment state before recreating the same
-scenario.
+The destroy command displays the exact bucket and service account, asks for
+confirmation, requires the original ADC creator principal, and uses the saved
+Terraform state. It removes the bucket, IAM bindings, and scenario service
+account, then verifies that the deployment state is empty. Avoid manual cloud
+deletion because it leaves the ignored local Terraform state stale.

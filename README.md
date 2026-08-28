@@ -170,6 +170,12 @@ Then enter the scenario command in the persistent terminal session:
 run scenario scenario.yaml --credential-source stdin
 ```
 
+For development infrastructure, start with `verisentinel --dev`, run `infra
+create --scenario PATH`, and then `sandbox connect INFRA_ID`. The prompt enters
+the connected service-account workspace, where `env show` displays its bounded
+scenario state and `env analyse` runs the validated, human-gated loop. Use
+`sandbox disconnect` and `infra destroy INFRA_ID` for Terraform-backed cleanup.
+
 Gemini ranks cataloged techniques, the validator filters them, and the terminal launchpad shows up
 to three admissible candidates. Approving one triggers fresh validation, a one-time approval record,
 a single guarded capsule delivery, and a new environment-state version. Scripts can use the direct

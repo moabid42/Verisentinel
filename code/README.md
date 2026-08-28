@@ -174,7 +174,12 @@ verisentinel corpus build
 verisentinel corpus status
 verisentinel sandbox build
 verisentinel sandbox doctor
+verisentinel sandbox connect [INFRA_ID] --scenario PATH
+verisentinel sandbox disconnect
+verisentinel env show
+verisentinel env analyse
 verisentinel scenario run PATH --credential-source SOURCE
+verisentinel --dev infra destroy INFRA_ID
 verisentinel session list
 verisentinel session show SESSION_ID
 verisentinel session resume SESSION_ID
@@ -336,16 +341,38 @@ python3 run.py --dev
 
 ```text
 infra create --scenario scenario.yaml
-sandbox connect infra_REPLACE_WITH_RETURNED_ID --scenario scenario.yaml
-run scenario scenario.yaml --credential-source \
-  impersonate:start@authorized-sandbox-project.iam.gserviceaccount.com
+sandbox connect infra_REPLACE_WITH_RETURNED_ID
+env show
+env analyse --rebuild-snapshot
 ```
+
+Inside the persistent development shell, a successful `sandbox connect` enters
+an application prompt scoped to the scenario service account. `env show`
+reports the declared and current Environment Brain state. `env analyse` runs the
+same bounded proposer/validator loop and explicit operator gate as `scenario
+run`, while reconstructing the exact impersonation source from the verified
+connection. Enter `/back` to leave that prompt without disconnecting and
+`/sandbox` to return to it.
 
 The development bucket has uniform access, enforced public-access prevention, and a one-day object
 lifecycle. The execution capsule remains on an internal network. A separate fixed gateway container
 has outbound access and writes only approved typed action envelopes to the exact configured bucket.
 The ADC principal needs permission to create the declared bucket and read and update its IAM policy;
 ADC impersonation also requires permission to mint a token for the scenario service account.
+
+Disconnect and destroy a Terraform-managed development deployment from the
+same shell when it is no longer needed:
+
+```text
+sandbox disconnect
+infra destroy infra_REPLACE_WITH_RETURNED_ID
+```
+
+Destruction requires confirmation and the exact ADC principal that created the
+deployment. It uses the scenario-bound Terraform root and generated state,
+verifies the state is empty, and retains only a non-sensitive destroyed record.
+Repeated `infra create` calls for one active Terraform deployment reuse its
+existing infrastructure ID instead of creating competing lifecycle records.
 
 ## 4. Run the direct human-gated loop
 

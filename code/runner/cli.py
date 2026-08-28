@@ -324,6 +324,7 @@ def infrastructure_create(
             scenario,
             source,
             location=location,
+            scenario_directory=scenario_path.expanduser().resolve().parent,
         )
     )
     TerminalUI().infrastructure_created(infrastructure)

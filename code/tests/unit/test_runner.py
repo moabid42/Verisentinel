@@ -94,6 +94,39 @@ def test_scenario_loads_opaque_credential_reference(tmp_path: Path) -> None:
     }
 
 
+def test_scenario_loads_safe_relative_terraform_root(tmp_path: Path) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+    document = path.read_text(encoding="utf-8").replace(
+        "  path: projects/security-sandbox/buckets/scenario-target",
+        "  path: projects/security-sandbox/buckets/scenario-target\n"
+        "  terraform_root: terraform",
+    )
+    path.write_text(document, encoding="utf-8")
+
+    scenario = load_scenario(path)
+
+    assert scenario.infrastructure.terraform_root == "terraform"
+
+
+@pytest.mark.parametrize("terraform_root", ["/tmp/module", "../module", "terraform root"])
+def test_scenario_rejects_unsafe_terraform_root(
+    tmp_path: Path,
+    terraform_root: str,
+) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+    document = path.read_text(encoding="utf-8").replace(
+        "  path: projects/security-sandbox/buckets/scenario-target",
+        "  path: projects/security-sandbox/buckets/scenario-target\n"
+        f"  terraform_root: {terraform_root}",
+    )
+    path.write_text(document, encoding="utf-8")
+
+    with pytest.raises(ScenarioError, match="terraform_root"):
+        load_scenario(path)
+
+
 def test_scenario_rejects_embedded_access_token(tmp_path: Path) -> None:
     path = tmp_path / "scenario.yaml"
     path.write_text(
@@ -382,7 +415,7 @@ def test_dev_infrastructure_create_uses_adc_and_scenario(
 ) -> None:
     path = tmp_path / "scenario.yaml"
     write_scenario(path)
-    calls: list[tuple[str, CredentialSourceKind, str]] = []
+    calls: list[tuple[str, CredentialSourceKind, str, Path]] = []
     record = DevelopmentInfrastructure(
         infrastructure_id="infra_" + "1" * 32,
         path="projects/security-sandbox/buckets/scenario-target",
@@ -394,8 +427,10 @@ def test_dev_infrastructure_create_uses_adc_and_scenario(
     )
 
     class Service:
-        def create(self, scenario, source, *, location):
-            calls.append((scenario.name, source.kind, location))
+        def create(self, scenario, source, *, location, scenario_directory):
+            calls.append(
+                (scenario.name, source.kind, location, scenario_directory)
+            )
             return record
 
     monkeypatch.setattr(cli_module, "_infrastructure_service", Service)
@@ -406,7 +441,9 @@ def test_dev_infrastructure_create_uses_adc_and_scenario(
     )
 
     assert result.exit_code == 0
-    assert calls == [("test-scenario", CredentialSourceKind.ADC, "EU")]
+    assert calls == [
+        ("test-scenario", CredentialSourceKind.ADC, "EU", tmp_path)
+    ]
     assert record.infrastructure_id in result.stdout
 
 
@@ -483,6 +520,10 @@ def test_sandbox_connect_selects_safe_mode_defaults(
     assert result.exit_code == 0
     assert calls[0][0] == "test-scenario"
     assert calls[0][1] == expected_kind
+    if expected_mode:
+        assert calls[0][2] == "start@security-sandbox.iam.gserviceaccount.com"
+    else:
+        assert calls[0][2] is None
     assert calls[0][3:] == (expected_mode, expected_id)
     assert "CONNECTED" in result.stdout
 

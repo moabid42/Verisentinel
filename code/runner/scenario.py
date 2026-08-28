@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 import yaml
@@ -19,12 +19,14 @@ _SERVICE_ACCOUNT_PATTERN = re.compile(
 )
 _PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 _BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$")
+_TERRAFORM_ROOT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 
 
 class InfrastructureTarget(ImmutableModel):
     """Remote infrastructure selected by one scenario."""
 
     path: str = Field(min_length=1, max_length=512)
+    terraform_root: str | None = Field(default=None, max_length=256)
 
     @field_validator("path")
     @classmethod
@@ -39,6 +41,22 @@ class InfrastructureTarget(ImmutableModel):
             or _BUCKET_PATTERN.fullmatch(parts[3]) is None
         ):
             raise ValueError("path must be projects/PROJECT/buckets/BUCKET")
+        return normalized
+
+    @field_validator("terraform_root")
+    @classmethod
+    def terraform_root_is_relative(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        path = PurePosixPath(normalized)
+        if (
+            not normalized
+            or path.is_absolute()
+            or ".." in path.parts
+            or _TERRAFORM_ROOT_PATTERN.fullmatch(normalized) is None
+        ):
+            raise ValueError("terraform_root must be a safe relative directory")
         return normalized
 
 

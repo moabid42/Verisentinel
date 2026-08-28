@@ -22,22 +22,41 @@ demonstrates that the guarded execution path reached the scenario target.
 The scenario deliberately selects one narrow path supported by the current
 implementation:
 
-- target: `gs://verisentinel-flag-project-551b0c2b-9622-4479-b23`;
+- target: `gs://verisentinel-tf-flag-project-551b0c2b-9622-4479-b23`;
 - starting identity:
-  `verisentinel-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com`;
+  `verisentinel-tf-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com`;
 - effective permission: `storage.objects.create`;
 - intended registered technique:
   `unauthenticated-access:gcp-public-buckets-privilege-escalation:6`; and
 - detection profile: Sigma, which does not cover the selected permission in the
   current corpus.
 
-The scenario contains only an opaque `credential_ref`. Tokens and model keys
-must not be added to this directory.
+The scenario contains only an opaque `credential_ref`. Its `terraform_root`
+points to the reviewed and provider-locked module in `terraform/`. Tokens,
+Terraform state, plan files, and model keys must not be added to this directory.
+
+Terraform creates all scenario-owned cloud resources:
+
+- the service account declared in `starting_service_account.identity`;
+- the private bucket declared in `infrastructure.path`;
+- an authoritative bucket-level `roles/storage.objectCreator` binding whose
+  only member is that service account; and
+- a service-account-level `roles/iam.serviceAccountTokenCreator` grant for the
+  verified ADC principal that performed provisioning.
+
+The provisioning principal is a control-plane identity used only by
+`infra create`. Sandbox connection and execution resolve a fresh impersonated
+token and reject it unless its principal exactly equals the scenario service
+account.
 
 ## One-time GCP preparation
 
-Run commands from `code/`. Authenticate the operator account named in the
-scenario and refresh Application Default Credentials:
+Run commands from `code/`. Install Terraform 1.10 or newer either on `PATH` or
+beside the virtual-environment Python as `.venv/bin/terraform`. The module pins
+Google provider 7.43.0 in `.terraform.lock.hcl`.
+
+Authenticate the operator account named in the scenario and refresh Application
+Default Credentials:
 
 ```bash
 gcloud auth login mouadabid2002@gmail.com
@@ -49,26 +68,9 @@ gcloud auth application-default set-quota-project \
   project-551b0c2b-9622-4479-b23
 ```
 
-Create the scenario service account if it does not already exist:
-
-```bash
-gcloud iam service-accounts create verisentinel-flag-runner \
-  --project=project-551b0c2b-9622-4479-b23 \
-  --display-name='Verisentinel flag scenario runner'
-```
-
-The authenticated operator must be able to create the bucket, update its IAM
-policy, and list and read its action objects. It must also be allowed to
-impersonate the scenario service account. Grant the narrow service-account
-binding when needed:
-
-```bash
-gcloud iam service-accounts add-iam-policy-binding \
-  verisentinel-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com \
-  --project=project-551b0c2b-9622-4479-b23 \
-  --member='user:mouadabid2002@gmail.com' \
-  --role='roles/iam.serviceAccountTokenCreator'
-```
+The authenticated operator must be allowed to create service accounts and
+buckets and update their IAM policies. Terraform creates the scenario service
+account and its impersonation grant; do not create either manually.
 
 Add `GEMINI_API_KEY` to the ignored `code/.env`; do not place it in the scenario
 or pass it on the command line.
@@ -83,7 +85,7 @@ or pass it on the command line.
 ```
 
 Expected results are `SCENARIO VALID` and an available sandbox. Provision the
-declared private bucket:
+declared service account, private bucket, and narrow IAM bindings:
 
 ```bash
 .venv/bin/verisentinel --dev infra create \
@@ -100,8 +102,9 @@ scenario service account:
 ```
 
 The development connection defaults to the exact required impersonation source.
-It verifies object-creation access before persisting the non-sensitive
-connection record.
+It verifies the resolved principal and object-creation access before persisting
+the non-sensitive connection record. Do not override it with operator ADC; a
+principal mismatch fails closed.
 
 ## Run and approve
 
@@ -111,7 +114,7 @@ Build the scenario's Sigma-only snapshot during the first run:
 .venv/bin/verisentinel --dev scenario run \
   scenarios/gcs_action_delivery_flag/scenario.yaml \
   --credential-source \
-  impersonate:verisentinel-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com \
+  impersonate:verisentinel-tf-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com \
   --rebuild-snapshot
 ```
 
@@ -127,7 +130,7 @@ List the action objects with the operator credential:
 
 ```bash
 gcloud storage ls \
-  gs://verisentinel-flag-project-551b0c2b-9622-4479-b23/actions/
+  gs://verisentinel-tf-flag-project-551b0c2b-9622-4479-b23/actions/
 ```
 
 Copy the object from the completed run to a temporary file, replacing the URI
@@ -135,7 +138,7 @@ with the exact object shown by the previous command:
 
 ```bash
 gcloud storage cp \
-  gs://verisentinel-flag-project-551b0c2b-9622-4479-b23/actions/approval_REPLACE.json \
+  gs://verisentinel-tf-flag-project-551b0c2b-9622-4479-b23/actions/approval_REPLACE.json \
   /tmp/verisentinel-action-envelope.json
 ```
 
@@ -158,8 +161,18 @@ the operator credential:
 
 ```bash
 gcloud storage rm --recursive \
-  gs://verisentinel-flag-project-551b0c2b-9622-4479-b23
+  gs://verisentinel-tf-flag-project-551b0c2b-9622-4479-b23
 ```
 
-This final command is destructive and should be run only after confirming the
-exact bucket name.
+Then delete the scenario-owned service account if it is no longer needed:
+
+```bash
+gcloud iam service-accounts delete \
+  verisentinel-tf-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com \
+  --project=project-551b0c2b-9622-4479-b23
+```
+
+These commands are destructive and should be run only after confirming the
+exact resource names. Manual deletion also leaves the ignored local Terraform
+state stale; remove that generated deployment state before recreating the same
+scenario.

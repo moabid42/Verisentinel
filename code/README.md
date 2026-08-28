@@ -259,6 +259,7 @@ target_scope: projects/authorized-sandbox-project
 
 infrastructure:
   path: projects/authorized-sandbox-project/buckets/authorized-action-sink
+  terraform_root: terraform
 
 starting_service_account:
   identity: start@authorized-sandbox-project.iam.gserviceaccount.com
@@ -279,6 +280,14 @@ a credential reference because GCP permissions are resource-specific.
 `credential_ref` is an opaque identifier, not a token or credential-source descriptor. It is the
 only credential-related value placed in the Environment Brain and persisted runtime records. Never
 put a raw credential in the scenario file.
+
+`terraform_root` is optional and must be a safe directory relative to the
+scenario file. When present, development `infra create` initializes, plans, and
+applies that reviewed root with scenario values. Terraform state, provider data,
+and the saved plan stay under ignored `runtime/infrastructure/`; only `.tf`
+files and the provider lock file belong beside the scenario. The root must
+output `infrastructure_path` and `starting_principal`, and both values must
+exactly match the scenario or provisioning fails.
 
 Supply the source independently when starting the runner. The source descriptor selects where the
 execution boundary will resolve a short-lived credential; it never contains the credential value:
@@ -315,8 +324,10 @@ starting service account:
 Do not place the token after `sandbox connect`; positional credential arguments are unsupported.
 For automation, use a protected file or environment source explicitly.
 
-Development mode can create the scenario bucket with gcloud Application Default Credentials,
-grant its starting service account object-creation access, and connect by opaque infrastructure ID:
+Development mode can apply scenario-local Terraform with gcloud Application
+Default Credentials and connect by opaque infrastructure ID. Terraform uses the
+verified ADC principal only for provisioning. The sandbox connection still
+requires a credential resolving to the exact scenario service account:
 
 ```bash
 gcloud auth application-default login

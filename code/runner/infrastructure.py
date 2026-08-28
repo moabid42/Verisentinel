@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -183,6 +184,9 @@ class TerraformInfrastructureProvider:
     ) -> None:
         """Initialize, plan, apply, and verify one Terraform root."""
         binary = shutil.which(self.binary)
+        sibling_binary = Path(sys.executable).with_name(self.binary)
+        if binary is None and sibling_binary.is_file():
+            binary = str(sibling_binary)
         if binary is None:
             raise InfrastructureError(
                 "Terraform CLI is required for this scenario infrastructure"

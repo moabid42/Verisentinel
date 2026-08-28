@@ -237,6 +237,52 @@ def test_terraform_provider_keeps_token_out_of_arguments(
     assert all(environment["GOOGLE_OAUTH_ACCESS_TOKEN"] == ACCESS_TOKEN for _, environment in calls)
 
 
+def test_terraform_provider_finds_virtual_environment_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module_directory = tmp_path / "module"
+    module_directory.mkdir()
+    (module_directory / "main.tf").write_text("terraform {}\n", encoding="utf-8")
+    (module_directory / ".terraform.lock.hcl").write_text("", encoding="utf-8")
+    sibling_binary = tmp_path / "bin" / "terraform"
+    sibling_binary.parent.mkdir()
+    sibling_binary.touch()
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        commands.append(command)
+        output = ""
+        if "output" in command:
+            output = (
+                '{"infrastructure_path":{"value":"projects/security-sandbox/'
+                'buckets/scenario-target"},"starting_principal":{"value":"'
+                f'{STARTING_PRINCIPAL}"}}}}'
+            )
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr("runner.infrastructure.shutil.which", lambda _: None)
+    monkeypatch.setattr(
+        "runner.infrastructure.sys.executable",
+        str(sibling_binary.with_name("python")),
+    )
+    monkeypatch.setattr("runner.infrastructure.subprocess.run", run)
+
+    TerraformInfrastructureProvider().provision(
+        module_directory=module_directory,
+        state_directory=tmp_path / "state",
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal=STARTING_PRINCIPAL,
+        provisioner_member="user:operator@example.test",
+        access_token=ACCESS_TOKEN,
+    )
+
+    assert all(command[0] == str(sibling_binary) for command in commands)
+
+
 def test_terraform_provider_sanitizes_command_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -565,6 +565,38 @@ def test_dev_infrastructure_destroy_requires_confirmation_and_uses_adc(
     assert "DESTROYED" in result.stdout
 
 
+def test_dev_infrastructure_show_does_not_offer_destroyed_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = DevelopmentInfrastructure(
+        infrastructure_id="infra_" + "6" * 32,
+        path="projects/security-sandbox/buckets/scenario-target",
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal="start@security-sandbox.iam.gserviceaccount.com",
+        created_by="operator@example.test",
+        status=InfrastructureStatus.DESTROYED,
+        destroyed_at=datetime.now(UTC),
+    )
+
+    class Repository:
+        def get(self, infrastructure_id: str):
+            assert infrastructure_id == record.infrastructure_id
+            return record
+
+    monkeypatch.setattr(cli_module, "_infrastructure_repository", Repository)
+
+    result = CLI.invoke(
+        app,
+        ["--dev", "infra", "show", record.infrastructure_id],
+    )
+
+    assert result.exit_code == 0
+    assert "DESTROYED" in result.stdout
+    assert "sandbox connect" not in result.stdout
+
+
 @pytest.mark.parametrize(
     ("arguments", "expected_kind", "expected_mode", "expected_id"),
     [

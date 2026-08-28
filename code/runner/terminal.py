@@ -16,7 +16,7 @@ from core.models import CandidateCard, DecisionKind
 from execution.capsule.doctor import CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
 from runner.connection import SandboxConnection
-from runner.infrastructure import DevelopmentInfrastructure
+from runner.infrastructure import DevelopmentInfrastructure, InfrastructureStatus
 from runner.session import ShellSession
 
 if TYPE_CHECKING:
@@ -440,23 +440,30 @@ class TerminalUI:
         infrastructure: DevelopmentInfrastructure,
     ) -> None:
         """Render a disposable development target."""
-        self._key_values(
-            "INFRASTRUCTURE",
-            (
-                ("ID", infrastructure.infrastructure_id),
-                ("Path", infrastructure.path),
-                ("Location", infrastructure.location),
-                ("Scenario user", infrastructure.starting_principal),
-                ("Created by", infrastructure.created_by),
-                ("Provisioner", infrastructure.provisioner),
-                ("Status", infrastructure.status.value),
+        rows = [
+            ("ID", infrastructure.infrastructure_id),
+            ("Path", infrastructure.path),
+            ("Location", infrastructure.location),
+            ("Scenario user", infrastructure.starting_principal),
+            ("Created by", infrastructure.created_by),
+            ("Provisioner", infrastructure.provisioner),
+            ("Status", infrastructure.status.value),
+        ]
+        is_active = infrastructure.status == InfrastructureStatus.ACTIVE
+        if is_active:
+            rows.append(
                 (
                     "Next",
                     f"Run sandbox connect {infrastructure.infrastructure_id}",
-                ),
-            ),
-            state="READY",
-            state_style="success",
+                )
+            )
+        elif infrastructure.destroyed_at is not None:
+            rows.append(("Destroyed", infrastructure.destroyed_at.isoformat()))
+        self._key_values(
+            "INFRASTRUCTURE",
+            tuple(rows),
+            state="READY" if is_active else "DESTROYED",
+            state_style="success" if is_active else "muted",
         )
 
     def infrastructure_destroyed(

@@ -41,8 +41,12 @@ scenario and refresh Application Default Credentials:
 
 ```bash
 gcloud auth login mouadabid2002@gmail.com
-gcloud auth application-default login mouadabid2002@gmail.com
+gcloud config set account mouadabid2002@gmail.com
 gcloud config set project project-551b0c2b-9622-4479-b23
+gcloud auth application-default login mouadabid2002@gmail.com \
+  --project=project-551b0c2b-9622-4479-b23
+gcloud auth application-default set-quota-project \
+  project-551b0c2b-9622-4479-b23
 ```
 
 Create the scenario service account if it does not already exist:

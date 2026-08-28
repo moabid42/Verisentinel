@@ -461,6 +461,28 @@ class InfrastructureRepository:
             )
         )
 
+    def find_active_deployment(
+        self,
+        *,
+        path: str,
+        starting_principal: str,
+        created_by: str,
+        provisioner: Literal["gcp-api", "terraform"],
+    ) -> DevelopmentInfrastructure | None:
+        """Return the newest active record for one physical deployment."""
+        return next(
+            (
+                record
+                for record in self.list()
+                if record.status == InfrastructureStatus.ACTIVE
+                and record.path == path
+                and record.starting_principal == starting_principal
+                and record.created_by == created_by
+                and record.provisioner == provisioner
+            ),
+            None,
+        )
+
 
 class InfrastructureService:
     """Provision scenario-bound development infrastructure through ADC."""
@@ -530,6 +552,27 @@ class InfrastructureService:
                     access_token=lease.access_token,
                 )
                 provisioner = "terraform"
+        resolved_scenario_path = (
+            str(scenario_path.expanduser().resolve())
+            if scenario_path is not None
+            else None
+        )
+        existing = self.repository.find_active_deployment(
+            path=scenario.infrastructure.path,
+            starting_principal=scenario.starting_service_account.identity,
+            created_by=inspection.principal,
+            provisioner=provisioner,
+        )
+        if existing is not None:
+            refreshed = existing.model_copy(
+                update={
+                    "location": location,
+                    "scenario_path": resolved_scenario_path,
+                }
+            )
+            self.repository.put(refreshed)
+            return refreshed
+
         infrastructure = DevelopmentInfrastructure(
             infrastructure_id=new_id("infra"),
             path=scenario.infrastructure.path,
@@ -539,11 +582,7 @@ class InfrastructureService:
             starting_principal=scenario.starting_service_account.identity,
             created_by=inspection.principal,
             provisioner=provisioner,
-            scenario_path=(
-                str(scenario_path.expanduser().resolve())
-                if scenario_path is not None
-                else None
-            ),
+            scenario_path=resolved_scenario_path,
         )
         self.repository.put(infrastructure)
         return infrastructure

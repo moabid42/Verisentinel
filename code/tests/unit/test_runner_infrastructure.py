@@ -200,6 +200,50 @@ def test_create_uses_scenario_terraform_and_exact_principal(tmp_path: Path) -> N
     }
 
 
+def test_create_reuses_active_terraform_deployment_record(tmp_path: Path) -> None:
+    repository = InfrastructureRepository(tmp_path / "records")
+    existing = DevelopmentInfrastructure(
+        infrastructure_id="infra_" + "7" * 32,
+        path="projects/security-sandbox/buckets/scenario-target",
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal=STARTING_PRINCIPAL,
+        created_by=PRINCIPAL,
+        provisioner="terraform",
+    )
+    repository.put(existing)
+    terraform = RecordingTerraformProvisioner()
+    service = InfrastructureService(
+        repository,
+        terraform_provisioner=terraform,
+        resolver=StaticResolver(),  # type: ignore[arg-type]
+    )
+    scenario_directory = tmp_path / "scenario"
+    (scenario_directory / "terraform").mkdir(parents=True)
+    scenario_path = scenario_directory / "scenario.yaml"
+    configured = scenario().model_copy(
+        update={
+            "infrastructure": scenario().infrastructure.model_copy(
+                update={"terraform_root": "terraform"}
+            )
+        }
+    )
+
+    result = service.create(
+        configured,
+        CredentialSource(kind=CredentialSourceKind.ADC),
+        location="europe-west3",
+        scenario_path=scenario_path,
+    )
+
+    assert result.infrastructure_id == existing.infrastructure_id
+    assert result.location == "europe-west3"
+    assert result.scenario_path == str(scenario_path.resolve())
+    assert repository.list() == (result,)
+    assert len(terraform.calls) == 1
+
+
 def test_terraform_provider_keeps_token_out_of_arguments(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

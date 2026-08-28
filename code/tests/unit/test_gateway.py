@@ -147,6 +147,33 @@ def test_gateway_manager_requires_built_image(tmp_path: Path) -> None:
         )
 
 
+def test_gateway_manager_deactivates_container_and_configuration(
+    tmp_path: Path,
+) -> None:
+    runtime = ScriptedRuntime([output()])
+    configuration = tmp_path / "connection.json"
+    configuration.write_text("{}", encoding="utf-8")
+    manager = GatewayManager(
+        runtime=runtime,
+        capsule=capsule(tmp_path),
+        image_lock_path=tmp_path / "image.lock",
+        configuration_path=configuration,
+    )
+
+    manager.deactivate()
+
+    assert runtime.calls == [
+        (
+            "container",
+            "rm",
+            "--force",
+            "--volumes",
+            "verisentinel-gateway",
+        )
+    ]
+    assert not configuration.exists()
+
+
 def test_gateway_configuration_rejects_unexpected_fields(tmp_path: Path) -> None:
     path = tmp_path / "connection.json"
     path.write_text(

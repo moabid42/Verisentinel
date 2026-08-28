@@ -344,6 +344,18 @@ class TerminalUI:
             return
         self.sandbox_connection(connection)
 
+    def sandbox_disconnected(
+        self,
+        connection: SandboxConnection | None,
+    ) -> None:
+        """Render explicit gateway deactivation."""
+        detail = (
+            f"Connection {connection.connection_id} was cleared."
+            if connection is not None
+            else "No active sandbox connection was present."
+        )
+        self.success("SANDBOX DISCONNECTED", detail)
+
     def infrastructure_created(
         self,
         infrastructure: DevelopmentInfrastructure,
@@ -357,12 +369,38 @@ class TerminalUI:
                 ("Location", infrastructure.location),
                 ("Scenario user", infrastructure.starting_principal),
                 ("Created by", infrastructure.created_by),
+                ("Provisioner", infrastructure.provisioner),
+                ("Status", infrastructure.status.value),
                 (
                     "Next",
                     f"Run sandbox connect {infrastructure.infrastructure_id}",
                 ),
             ),
             state="READY",
+            state_style="success",
+        )
+
+    def infrastructure_destroyed(
+        self,
+        infrastructure: DevelopmentInfrastructure,
+    ) -> None:
+        """Render a completed Terraform destruction."""
+        self._key_values(
+            "INFRASTRUCTURE",
+            (
+                ("ID", infrastructure.infrastructure_id),
+                ("Path", infrastructure.path),
+                ("Scenario user", infrastructure.starting_principal),
+                (
+                    "Destroyed",
+                    (
+                        infrastructure.destroyed_at.isoformat()
+                        if infrastructure.destroyed_at is not None
+                        else "unknown"
+                    ),
+                ),
+            ),
+            state="DESTROYED",
             state_style="success",
         )
 
@@ -383,11 +421,13 @@ class TerminalUI:
         table.add_column("ID", style="accent", no_wrap=True)
         table.add_column("PATH")
         table.add_column("PRINCIPAL")
+        table.add_column("STATUS", no_wrap=True)
         for record in records:
             table.add_row(
                 record.infrastructure_id,
                 record.path,
                 record.starting_principal,
+                record.status.value,
             )
         self.console.print(
             Panel(

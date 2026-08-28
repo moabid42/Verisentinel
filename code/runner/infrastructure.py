@@ -9,18 +9,21 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Protocol
 
 import httpx
 from pydantic import Field
 
+from core.errors import AuthorizationError
 from core.ids import new_id
 from core.models import ImmutableModel, utc_now
 from core.persistence import JsonModelStore
 from execution.credentials import CredentialResolver, CredentialSource
-from runner.scenario import PlannerScenario
+from runner.scenario import PlannerScenario, load_scenario
 
 _INFRASTRUCTURE_ID_PATTERN = re.compile(r"^infra_[0-9a-f]{32}$")
 _PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
@@ -30,6 +33,13 @@ _STORAGE_API = "https://storage.googleapis.com/storage/v1"
 
 class InfrastructureError(RuntimeError):
     """A development infrastructure operation failed at its provider boundary."""
+
+
+class InfrastructureStatus(StrEnum):
+    """Lifecycle state of one development infrastructure deployment."""
+
+    ACTIVE = "active"
+    DESTROYED = "destroyed"
 
 
 class DevelopmentInfrastructure(ImmutableModel):
@@ -43,7 +53,10 @@ class DevelopmentInfrastructure(ImmutableModel):
     starting_principal: str = Field(min_length=1, max_length=320)
     created_by: str = Field(min_length=1, max_length=320)
     provisioner: Literal["gcp-api", "terraform"] = "gcp-api"
+    scenario_path: str | None = Field(default=None, max_length=4096)
+    status: InfrastructureStatus = InfrastructureStatus.ACTIVE
     created_at: datetime = Field(default_factory=utc_now)
+    destroyed_at: datetime | None = None
 
 
 class InfrastructureProvider(Protocol):
@@ -75,6 +88,30 @@ class TerraformProvisioner(Protocol):
         provisioner_member: str,
         access_token: str,
     ) -> None: ...
+
+    def destroy(
+        self,
+        *,
+        module_directory: Path,
+        state_directory: Path,
+        project: str,
+        bucket: str,
+        location: str,
+        starting_principal: str,
+        provisioner_member: str,
+        access_token: str,
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _TerraformContext:
+    """Non-persisted Terraform command paths, variables, and environment."""
+
+    prefix: tuple[str, ...]
+    environment: dict[str, str]
+    state_path: Path
+    plan_path: Path
+    variables: tuple[str, ...]
 
 
 class GcpInfrastructureProvider:
@@ -183,6 +220,120 @@ class TerraformInfrastructureProvider:
         access_token: str,
     ) -> None:
         """Initialize, plan, apply, and verify one Terraform root."""
+        context = self._context(
+            module_directory=module_directory,
+            state_directory=state_directory,
+            project=project,
+            bucket=bucket,
+            location=location,
+            starting_principal=starting_principal,
+            provisioner_member=provisioner_member,
+            access_token=access_token,
+        )
+        self._initialize(context)
+        self._run(
+            [
+                *context.prefix,
+                "plan",
+                "-input=false",
+                "-no-color",
+                f"-out={context.plan_path}",
+                f"-state={context.state_path}",
+                *context.variables,
+            ],
+            context.environment,
+            "plan the scenario infrastructure",
+        )
+        try:
+            self._apply(context, "apply the scenario infrastructure")
+            output = self._run(
+                [
+                    *context.prefix,
+                    "output",
+                    "-json",
+                    "-no-color",
+                    f"-state={context.state_path}",
+                ],
+                context.environment,
+                "read the scenario infrastructure outputs",
+            )
+            self._verify_outputs(
+                output,
+                infrastructure_path=f"projects/{project}/buckets/{bucket}",
+                starting_principal=starting_principal,
+            )
+        finally:
+            context.plan_path.unlink(missing_ok=True)
+
+    def destroy(
+        self,
+        *,
+        module_directory: Path,
+        state_directory: Path,
+        project: str,
+        bucket: str,
+        location: str,
+        starting_principal: str,
+        provisioner_member: str,
+        access_token: str,
+    ) -> None:
+        """Plan and apply destruction using the deployment's existing state."""
+        context = self._context(
+            module_directory=module_directory,
+            state_directory=state_directory,
+            project=project,
+            bucket=bucket,
+            location=location,
+            starting_principal=starting_principal,
+            provisioner_member=provisioner_member,
+            access_token=access_token,
+        )
+        if not context.state_path.is_file():
+            raise InfrastructureError("Terraform state is unavailable for this infrastructure")
+        self._initialize(context)
+        self._run(
+            [
+                *context.prefix,
+                "plan",
+                "-destroy",
+                "-input=false",
+                "-no-color",
+                f"-out={context.plan_path}",
+                f"-state={context.state_path}",
+                *context.variables,
+            ],
+            context.environment,
+            "plan infrastructure destruction",
+        )
+        try:
+            self._apply(context, "destroy the scenario infrastructure")
+            remaining = self._run(
+                [
+                    *context.prefix,
+                    "state",
+                    "list",
+                    f"-state={context.state_path}",
+                ],
+                context.environment,
+                "verify infrastructure destruction",
+            )
+            if remaining.strip():
+                raise InfrastructureError("Terraform state still contains scenario resources")
+        finally:
+            context.plan_path.unlink(missing_ok=True)
+
+    def _context(
+        self,
+        *,
+        module_directory: Path,
+        state_directory: Path,
+        project: str,
+        bucket: str,
+        location: str,
+        starting_principal: str,
+        provisioner_member: str,
+        access_token: str,
+    ) -> _TerraformContext:
         binary = shutil.which(self.binary)
         sibling_binary = Path(sys.executable).with_name(self.binary)
         if binary is None and sibling_binary.is_file():
@@ -207,61 +358,48 @@ class TerraformInfrastructureProvider:
             "TF_IN_AUTOMATION": "1",
             "TF_INPUT": "0",
         }
-        prefix = [binary, f"-chdir={module_directory}"]
-        variables = [
+        prefix = (binary, f"-chdir={module_directory}")
+        variables = (
             f"-var=project_id={project}",
             f"-var=bucket_name={bucket}",
             f"-var=location={location}",
             f"-var=starting_principal={starting_principal}",
             f"-var=provisioner_member={provisioner_member}",
-        ]
+        )
+        return _TerraformContext(
+            prefix=prefix,
+            environment=environment,
+            state_path=state_path,
+            plan_path=plan_path,
+            variables=variables,
+        )
+
+    def _initialize(self, context: _TerraformContext) -> None:
         self._run(
-            [*prefix, "init", "-input=false", "-lockfile=readonly", "-no-color"],
-            environment,
+            [
+                *context.prefix,
+                "init",
+                "-input=false",
+                "-lockfile=readonly",
+                "-no-color",
+            ],
+            context.environment,
             "initialize the scenario Terraform root",
         )
+
+    def _apply(self, context: _TerraformContext, operation: str) -> None:
         self._run(
             [
-                *prefix,
-                "plan",
-                "-input=false",
-                "-no-color",
-                f"-out={plan_path}",
-                f"-state={state_path}",
-                *variables,
-            ],
-            environment,
-            "plan the scenario infrastructure",
-        )
-        self._run(
-            [
-                *prefix,
+                *context.prefix,
                 "apply",
                 "-input=false",
                 "-no-color",
-                f"-state={state_path}",
-                str(plan_path),
+                f"-state={context.state_path}",
+                str(context.plan_path),
             ],
-            environment,
-            "apply the scenario infrastructure",
+            context.environment,
+            operation,
         )
-        output = self._run(
-            [
-                *prefix,
-                "output",
-                "-json",
-                "-no-color",
-                f"-state={state_path}",
-            ],
-            environment,
-            "read the scenario infrastructure outputs",
-        )
-        self._verify_outputs(
-            output,
-            infrastructure_path=f"projects/{project}/buckets/{bucket}",
-            starting_principal=starting_principal,
-        )
-        plan_path.unlink(missing_ok=True)
 
     def _run(
         self,
@@ -349,6 +487,7 @@ class InfrastructureService:
         *,
         location: str,
         scenario_directory: Path | None = None,
+        scenario_path: Path | None = None,
     ) -> DevelopmentInfrastructure:
         """Create and persist one disposable target bound to a scenario."""
         project, bucket = _parse_bucket_path(scenario.infrastructure.path)
@@ -367,8 +506,17 @@ class InfrastructureService:
                 )
                 provisioner = "gcp-api"
             else:
+                resolved_scenario_path = (
+                    scenario_path.expanduser().resolve()
+                    if scenario_path is not None
+                    else None
+                )
                 module_directory = _terraform_root(
-                    scenario_directory,
+                    (
+                        resolved_scenario_path.parent
+                        if resolved_scenario_path is not None
+                        else scenario_directory
+                    ),
                     terraform_root,
                 )
                 self.terraform_provisioner.provision(
@@ -391,9 +539,89 @@ class InfrastructureService:
             starting_principal=scenario.starting_service_account.identity,
             created_by=inspection.principal,
             provisioner=provisioner,
+            scenario_path=(
+                str(scenario_path.expanduser().resolve())
+                if scenario_path is not None
+                else None
+            ),
         )
         self.repository.put(infrastructure)
         return infrastructure
+
+    def destroy(
+        self,
+        infrastructure_id: str,
+        source: CredentialSource,
+    ) -> DevelopmentInfrastructure:
+        """Destroy one Terraform deployment with its original creator identity."""
+        infrastructure = self.repository.get(infrastructure_id)
+        if infrastructure.status != InfrastructureStatus.ACTIVE:
+            raise InfrastructureError("development infrastructure is already destroyed")
+        if infrastructure.provisioner != "terraform":
+            raise InfrastructureError(
+                "only Terraform-managed infrastructure supports managed destruction"
+            )
+        if infrastructure.scenario_path is None:
+            raise InfrastructureError("infrastructure record has no bound scenario path")
+        scenario_path = Path(infrastructure.scenario_path)
+        scenario = load_scenario(scenario_path)
+        self._require_matching_record(infrastructure, scenario)
+        terraform_root = scenario.infrastructure.terraform_root
+        if terraform_root is None:
+            raise InfrastructureError("bound scenario has no Terraform root")
+
+        inspection = self.resolver.inspect(source)
+        if inspection.principal != infrastructure.created_by:
+            raise AuthorizationError(
+                "infrastructure destroy principal does not match its creator"
+            )
+        credential_ref = f"infra/{new_id('lease')}"
+        self.resolver.register(credential_ref, source)
+        with self.resolver.resolve(credential_ref, infrastructure.created_by) as lease:
+            self.terraform_provisioner.destroy(
+                module_directory=_terraform_root(
+                    scenario_path.expanduser().resolve().parent,
+                    terraform_root,
+                ),
+                state_directory=self._terraform_state_directory(scenario),
+                project=infrastructure.project,
+                bucket=infrastructure.bucket,
+                location=infrastructure.location,
+                starting_principal=infrastructure.starting_principal,
+                provisioner_member=_iam_member(infrastructure.created_by),
+                access_token=lease.access_token,
+            )
+        destroyed = infrastructure.model_copy(
+            update={
+                "status": InfrastructureStatus.DESTROYED,
+                "destroyed_at": utc_now(),
+            }
+        )
+        self.repository.put(destroyed)
+        return destroyed
+
+    @staticmethod
+    def _require_matching_record(
+        infrastructure: DevelopmentInfrastructure,
+        scenario: PlannerScenario,
+    ) -> None:
+        project, bucket = _parse_bucket_path(scenario.infrastructure.path)
+        expected = (
+            scenario.infrastructure.path,
+            project,
+            bucket,
+            scenario.starting_service_account.identity,
+        )
+        actual = (
+            infrastructure.path,
+            infrastructure.project,
+            infrastructure.bucket,
+            infrastructure.starting_principal,
+        )
+        if actual != expected:
+            raise InfrastructureError(
+                "infrastructure record does not match its bound scenario"
+            )
 
     def _terraform_state_directory(self, scenario: PlannerScenario) -> Path:
         identity = "\n".join(

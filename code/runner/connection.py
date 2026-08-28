@@ -22,6 +22,7 @@ from execution.credentials import (
 from runner.infrastructure import (
     DevelopmentInfrastructure,
     InfrastructureRepository,
+    InfrastructureStatus,
     _parse_bucket_path,
 )
 from runner.scenario import PlannerScenario
@@ -44,6 +45,7 @@ class SandboxConnection(ImmutableModel):
     infrastructure_id: str | None = None
     infrastructure_path: str = Field(min_length=1, max_length=512)
     scenario_name: str = Field(min_length=1, max_length=256)
+    scenario_path: str | None = Field(default=None, max_length=4096)
     principal: str = Field(min_length=1, max_length=320)
     credential_ref: str = Field(min_length=1, max_length=128)
     source_kind: CredentialSourceKind
@@ -74,6 +76,8 @@ class ConnectionActivator(Protocol):
     """Activate the restricted Docker route for a verified connection."""
 
     def activate(self, *, infrastructure_path: str, principal: str) -> None: ...
+
+    def deactivate(self) -> None: ...
 
 
 class GcpConnectionProbe:
@@ -138,6 +142,10 @@ class SandboxConnectionRepository:
         except NotFoundError:
             return None
 
+    def clear(self) -> None:
+        """Remove the generated active-connection record if present."""
+        (self.store.directory / "active.json").unlink(missing_ok=True)
+
 
 class SandboxConnectionService:
     """Verify and activate scenario-specific sandbox connections."""
@@ -164,6 +172,7 @@ class SandboxConnectionService:
         *,
         development_mode: bool,
         infrastructure_id: str | None = None,
+        scenario_path: Path | None = None,
     ) -> SandboxConnection:
         """Verify the exact scenario principal and activate its target."""
         development = self._development_target(
@@ -189,6 +198,11 @@ class SandboxConnectionService:
             infrastructure_id=(development.infrastructure_id if development is not None else None),
             infrastructure_path=scenario.infrastructure.path,
             scenario_name=scenario.name,
+            scenario_path=(
+                str(scenario_path.expanduser().resolve())
+                if scenario_path is not None
+                else None
+            ),
             principal=scenario.starting_service_account.identity,
             credential_ref=credential_ref,
             source_kind=source.kind,
@@ -199,6 +213,27 @@ class SandboxConnectionService:
                 principal=connection.principal,
             )
         self.repository.put(connection)
+        return connection
+
+    def disconnect(
+        self,
+        *,
+        infrastructure_id: str | None = None,
+    ) -> SandboxConnection | None:
+        """Deactivate and clear the current connection when it matches."""
+        connection = self.repository.optional_active()
+        if connection is None:
+            return None
+        if (
+            infrastructure_id is not None
+            and connection.infrastructure_id != infrastructure_id
+        ):
+            raise AuthorizationError(
+                "active sandbox connection does not match the infrastructure ID"
+            )
+        if self.activator is not None:
+            self.activator.deactivate()
+        self.repository.clear()
         return connection
 
     def _development_target(
@@ -217,6 +252,8 @@ class SandboxConnectionService:
         if self.infrastructure is None:
             raise RuntimeError("development infrastructure repository is unavailable")
         target = self.infrastructure.get(infrastructure_id)
+        if target.status != InfrastructureStatus.ACTIVE:
+            raise AuthorizationError("development infrastructure is not active")
         if target.path != scenario.infrastructure.path:
             raise AuthorizationError("development infrastructure does not match the scenario path")
         if target.starting_principal != scenario.starting_service_account.identity:

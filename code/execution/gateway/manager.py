@@ -224,6 +224,15 @@ class GatewayManager:
         ):
             raise DockerRuntimeError("infrastructure gateway is unavailable")
 
+    def deactivate(self) -> None:
+        """Remove the fixed gateway and its generated connection configuration."""
+        self.runtime.run(
+            ("container", "rm", "--force", "--volumes", _GATEWAY_CONTAINER),
+            timeout_seconds=10.0,
+            output_limit_bytes=16_384,
+        )
+        self.configuration_path.unlink(missing_ok=True)
+
     def _image(self) -> str:
         try:
             image = self.image_lock_path.read_text(encoding="utf-8").strip()

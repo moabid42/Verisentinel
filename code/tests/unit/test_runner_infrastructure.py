@@ -40,6 +40,9 @@ class RecordingTerraformProvisioner:
     def provision(self, **values: object) -> None:
         self.calls.append(values)
 
+    def destroy(self, **values: object) -> None:
+        self.calls.append({"operation": "destroy", **values})
+
 
 class StaticResolver:
     def __init__(self) -> None:
@@ -172,11 +175,14 @@ def test_create_uses_scenario_terraform_and_exact_principal(tmp_path: Path) -> N
         configured,
         CredentialSource(kind=CredentialSourceKind.ADC),
         location="EU",
-        scenario_directory=scenario_directory,
+        scenario_path=scenario_directory / "scenario.yaml",
     )
 
     assert api_provider.calls == []
     assert result.provisioner == "terraform"
+    assert result.scenario_path == str(
+        (scenario_directory / "scenario.yaml").resolve()
+    )
     assert len(terraform.calls) == 1
     call = terraform.calls[0]
     state_directory = call.pop("state_directory")
@@ -285,6 +291,107 @@ def test_terraform_provider_finds_virtual_environment_sibling(
     )
 
     assert all(command[0] == str(sibling_binary) for command in commands)
+
+
+def test_terraform_provider_plans_and_verifies_destroy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module_directory = tmp_path / "module"
+    module_directory.mkdir()
+    (module_directory / "main.tf").write_text("terraform {}\n", encoding="utf-8")
+    (module_directory / ".terraform.lock.hcl").write_text("", encoding="utf-8")
+    state_directory = tmp_path / "state"
+    state_directory.mkdir()
+    (state_directory / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("runner.infrastructure.shutil.which", lambda _: "/bin/terraform")
+    monkeypatch.setattr("runner.infrastructure.subprocess.run", run)
+
+    TerraformInfrastructureProvider().destroy(
+        module_directory=module_directory,
+        state_directory=state_directory,
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal=STARTING_PRINCIPAL,
+        provisioner_member="user:operator@example.test",
+        access_token=ACCESS_TOKEN,
+    )
+
+    assert [command[2:4] for command in calls] == [
+        ["init", "-input=false"],
+        ["plan", "-destroy"],
+        ["apply", "-input=false"],
+        ["state", "list"],
+    ]
+    assert not (state_directory / "terraform.tfplan").exists()
+
+
+def test_destroy_uses_bound_scenario_and_marks_record_destroyed(
+    tmp_path: Path,
+) -> None:
+    scenario_directory = tmp_path / "scenario"
+    module_directory = scenario_directory / "terraform"
+    module_directory.mkdir(parents=True)
+    scenario_path = scenario_directory / "scenario.yaml"
+    scenario_path.write_text(
+        """name: development
+objective: Evaluate storage paths
+operator: operator@example.test
+target_scope: projects/security-sandbox
+infrastructure:
+  path: projects/security-sandbox/buckets/scenario-target
+  terraform_root: terraform
+starting_service_account:
+  identity: start@example.iam.gserviceaccount.com
+  credential_ref: run/default
+  permissions:
+    - storage.objects.create
+""",
+        encoding="utf-8",
+    )
+    repository = InfrastructureRepository(tmp_path / "records")
+    infrastructure = DevelopmentInfrastructure(
+        infrastructure_id="infra_" + "4" * 32,
+        path="projects/security-sandbox/buckets/scenario-target",
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal=STARTING_PRINCIPAL,
+        created_by=PRINCIPAL,
+        provisioner="terraform",
+        scenario_path=str(scenario_path),
+    )
+    repository.put(infrastructure)
+    terraform = RecordingTerraformProvisioner()
+    service = InfrastructureService(
+        repository,
+        terraform_provisioner=terraform,
+        resolver=StaticResolver(),  # type: ignore[arg-type]
+    )
+
+    result = service.destroy(
+        infrastructure.infrastructure_id,
+        CredentialSource(kind=CredentialSourceKind.ADC),
+    )
+
+    assert result.status.value == "destroyed"
+    assert result.destroyed_at is not None
+    assert repository.get(infrastructure.infrastructure_id) == result
+    assert terraform.calls[0]["operation"] == "destroy"
+    assert terraform.calls[0]["module_directory"] == module_directory
+    assert terraform.calls[0]["starting_principal"] == STARTING_PRINCIPAL
+    persisted = (
+        tmp_path / "records" / f"{infrastructure.infrastructure_id}.json"
+    ).read_text(encoding="utf-8")
+    assert ACCESS_TOKEN not in persisted
 
 
 def test_terraform_provider_sanitizes_command_failure(

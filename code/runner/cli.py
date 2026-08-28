@@ -261,8 +261,16 @@ def sandbox_connect(
 ) -> None:
     """Verify a scenario user and activate its remote infrastructure."""
     development_mode = _dev_mode(context)
+    resolved_scenario_path = _invoke(
+        lambda: _connection_scenario_path(
+            scenario_path,
+            development_mode=development_mode,
+            infrastructure_id=infrastructure_id,
+        ),
+        input_errors=(NotFoundError, ValueError),
+    )
     scenario = _invoke(
-        lambda: load_scenario(scenario_path.expanduser().resolve()),
+        lambda: load_scenario(resolved_scenario_path),
         input_errors=(ScenarioError,),
     )
     source_value = credential_source or (
@@ -279,10 +287,18 @@ def sandbox_connect(
             source,
             development_mode=development_mode,
             infrastructure_id=infrastructure_id,
+            scenario_path=resolved_scenario_path,
         ),
         input_errors=(ValueError,),
     )
     TerminalUI().sandbox_connection(connection)
+
+
+@sandbox_app.command("disconnect")
+def sandbox_disconnect() -> None:
+    """Deactivate the fixed gateway and clear the active connection."""
+    connection = _invoke(_connection_service().disconnect)
+    TerminalUI().sandbox_disconnected(connection)
 
 
 @sandbox_app.command("status")
@@ -324,10 +340,51 @@ def infrastructure_create(
             scenario,
             source,
             location=location,
-            scenario_directory=scenario_path.expanduser().resolve().parent,
+            scenario_path=scenario_path.expanduser().resolve(),
         )
     )
     TerminalUI().infrastructure_created(infrastructure)
+
+
+@infra_app.command("destroy")
+def infrastructure_destroy(
+    context: typer.Context,
+    infrastructure_id: Annotated[
+        str,
+        typer.Argument(help="Opaque development infrastructure ID."),
+    ],
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            help="Confirm destruction without an interactive prompt.",
+        ),
+    ] = False,
+) -> None:
+    """Destroy one Terraform deployment and its scenario-owned resources."""
+    _require_dev(context)
+    infrastructure = _invoke(
+        lambda: _infrastructure_repository().get(infrastructure_id),
+        input_errors=(NotFoundError, ValueError),
+    )
+    if not yes and not typer.confirm(
+        f"Destroy {infrastructure.infrastructure_id} and all scenario resources?"
+    ):
+        raise typer.Abort()
+    active = _connection_repository().optional_active()
+    if active is not None and active.infrastructure_id == infrastructure_id:
+        _invoke(
+            lambda: _connection_service().disconnect(
+                infrastructure_id=infrastructure_id
+            )
+        )
+    destroyed = _invoke(
+        lambda: _infrastructure_service().destroy(
+            infrastructure_id,
+            parse_credential_source("adc"),
+        )
+    )
+    TerminalUI().infrastructure_destroyed(destroyed)
 
 
 @infra_app.command("list")
@@ -534,6 +591,26 @@ def _connection_service() -> SandboxConnectionService:
         infrastructure=_infrastructure_repository(),
         activator=GatewayManager(),
     )
+
+
+def _connection_scenario_path(
+    requested_path: Path,
+    *,
+    development_mode: bool,
+    infrastructure_id: str | None,
+) -> Path:
+    if (
+        development_mode
+        and infrastructure_id is not None
+        and requested_path == Path("scenario.yaml")
+    ):
+        infrastructure = _infrastructure_repository().get(infrastructure_id)
+        if infrastructure.scenario_path is None:
+            raise ValueError(
+                "infrastructure has no bound scenario; pass --scenario PATH"
+            )
+        return Path(infrastructure.scenario_path).expanduser().resolve()
+    return requested_path.expanduser().resolve()
 
 
 def _run_shell(

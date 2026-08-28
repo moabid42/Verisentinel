@@ -59,6 +59,9 @@ class RecordingActivator:
         if self.fails:
             raise RuntimeError("gateway unavailable")
 
+    def deactivate(self) -> None:
+        self.calls.append({"operation": "deactivate"})
+
 
 def scenario() -> PlannerScenario:
     return PlannerScenario.model_validate(
@@ -96,11 +99,13 @@ def test_remote_connection_verifies_principal_and_persists_no_token(
         scenario(),
         CredentialSource(kind=CredentialSourceKind.STDIN),
         development_mode=False,
+        scenario_path=tmp_path / "scenario.yaml",
     )
 
     assert result.mode == ConnectionMode.REMOTE
     assert result.infrastructure_id is None
     assert result.principal == PRINCIPAL
+    assert result.scenario_path == str((tmp_path / "scenario.yaml").resolve())
     assert probe.calls[0]["access_token"] == ACCESS_TOKEN
     assert activator.calls == [
         {
@@ -211,4 +216,26 @@ def test_connection_is_not_persisted_when_gateway_activation_fails(
             development_mode=False,
         )
 
+    assert repository.optional_active() is None
+
+
+def test_disconnect_deactivates_gateway_and_clears_record(tmp_path: Path) -> None:
+    repository = SandboxConnectionRepository(tmp_path)
+    activator = RecordingActivator()
+    service = SandboxConnectionService(
+        repository,
+        resolver=StaticResolver(),  # type: ignore[arg-type]
+        probe=RecordingProbe(),
+        activator=activator,
+    )
+    connection = service.connect(
+        scenario(),
+        CredentialSource(kind=CredentialSourceKind.STDIN),
+        development_mode=False,
+    )
+
+    disconnected = service.disconnect()
+
+    assert disconnected == connection
+    assert activator.calls[-1] == {"operation": "deactivate"}
     assert repository.optional_active() is None

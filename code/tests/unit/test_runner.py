@@ -21,7 +21,7 @@ from execution.credentials import CredentialInspection, CredentialSourceKind
 from runner.application import CorpusStatus, PlannerRunRequest
 from runner.cli import app, main
 from runner.connection import ConnectionMode, SandboxConnection
-from runner.infrastructure import DevelopmentInfrastructure
+from runner.infrastructure import DevelopmentInfrastructure, InfrastructureStatus
 from runner.scenario import ScenarioError, load_scenario
 from runner.session import ShellSessionRepository
 from runner.terminal import TerminalUI, parse_choice
@@ -427,9 +427,9 @@ def test_dev_infrastructure_create_uses_adc_and_scenario(
     )
 
     class Service:
-        def create(self, scenario, source, *, location, scenario_directory):
+        def create(self, scenario, source, *, location, scenario_path):
             calls.append(
-                (scenario.name, source.kind, location, scenario_directory)
+                (scenario.name, source.kind, location, scenario_path.parent)
             )
             return record
 
@@ -445,6 +445,60 @@ def test_dev_infrastructure_create_uses_adc_and_scenario(
         ("test-scenario", CredentialSourceKind.ADC, "EU", tmp_path)
     ]
     assert record.infrastructure_id in result.stdout
+
+
+def test_dev_infrastructure_destroy_requires_confirmation_and_uses_adc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = DevelopmentInfrastructure(
+        infrastructure_id="infra_" + "4" * 32,
+        path="projects/security-sandbox/buckets/scenario-target",
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal="start@security-sandbox.iam.gserviceaccount.com",
+        created_by="operator@example.test",
+        provisioner="terraform",
+        scenario_path="/workspace/scenario.yaml",
+    )
+    calls: list[tuple[str, CredentialSourceKind]] = []
+
+    class Repository:
+        def get(self, infrastructure_id: str):
+            assert infrastructure_id == record.infrastructure_id
+            return record
+
+    class Service:
+        def destroy(self, infrastructure_id, source):
+            calls.append((infrastructure_id, source.kind))
+            return record.model_copy(
+                update={
+                    "status": InfrastructureStatus.DESTROYED,
+                    "destroyed_at": datetime.now(UTC),
+                }
+            )
+
+    class ConnectionRepository:
+        def optional_active(self):
+            return None
+
+    monkeypatch.setattr(cli_module, "_infrastructure_repository", Repository)
+    monkeypatch.setattr(cli_module, "_infrastructure_service", Service)
+    monkeypatch.setattr(
+        cli_module,
+        "_connection_repository",
+        ConnectionRepository,
+    )
+
+    result = CLI.invoke(
+        app,
+        ["--dev", "infra", "destroy", record.infrastructure_id],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(record.infrastructure_id, CredentialSourceKind.ADC)]
+    assert "DESTROYED" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -498,6 +552,7 @@ def test_sandbox_connect_selects_safe_mode_defaults(
             *,
             development_mode,
             infrastructure_id,
+            scenario_path,
         ):
             calls.append(
                 (
@@ -506,6 +561,7 @@ def test_sandbox_connect_selects_safe_mode_defaults(
                     source.locator,
                     development_mode,
                     infrastructure_id,
+                    scenario_path,
                 )
             )
             return connection
@@ -524,8 +580,62 @@ def test_sandbox_connect_selects_safe_mode_defaults(
         assert calls[0][2] == "start@security-sandbox.iam.gserviceaccount.com"
     else:
         assert calls[0][2] is None
-    assert calls[0][3:] == (expected_mode, expected_id)
+    assert calls[0][3:5] == (expected_mode, expected_id)
+    assert calls[0][5] == path.resolve()
     assert "CONNECTED" in result.stdout
+
+
+def test_dev_sandbox_connect_infers_scenario_from_infrastructure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scenario_path = tmp_path / "bound.yaml"
+    write_scenario(scenario_path)
+    infrastructure_id = "infra_" + "5" * 32
+    record = DevelopmentInfrastructure(
+        infrastructure_id=infrastructure_id,
+        path="projects/security-sandbox/buckets/scenario-target",
+        project="security-sandbox",
+        bucket="scenario-target",
+        location="EU",
+        starting_principal="start@security-sandbox.iam.gserviceaccount.com",
+        created_by="operator@example.test",
+        provisioner="terraform",
+        scenario_path=str(scenario_path),
+    )
+    calls: list[Path] = []
+
+    class Repository:
+        def get(self, requested_id: str):
+            assert requested_id == infrastructure_id
+            return record
+
+    class Service:
+        def connect(self, scenario, source, **values):
+            del scenario, source
+            calls.append(values["scenario_path"])
+            return SandboxConnection(
+                connection_id="connection_" + "6" * 32,
+                mode=ConnectionMode.DEVELOPMENT,
+                infrastructure_id=infrastructure_id,
+                infrastructure_path=record.path,
+                scenario_name="test-scenario",
+                scenario_path=str(scenario_path),
+                principal=record.starting_principal,
+                credential_ref="run/default",
+                source_kind=CredentialSourceKind.IMPERSONATE,
+            )
+
+    monkeypatch.setattr(cli_module, "_infrastructure_repository", Repository)
+    monkeypatch.setattr(cli_module, "_connection_service", Service)
+
+    result = CLI.invoke(
+        app,
+        ["--dev", "sandbox", "connect", infrastructure_id],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [scenario_path.resolve()]
 
 
 def test_session_routes_render_persisted_metadata(

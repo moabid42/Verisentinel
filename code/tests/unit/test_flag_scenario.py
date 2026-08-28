@@ -28,7 +28,7 @@ def action_envelope() -> dict[str, object]:
         "engagement_id": "engagement_fedcba9876543210fedcba9876543210",
         "expected_capabilities": [],
         "identity": (
-            "verisentinel-flag-runner@"
+            "verisentinel-tf-flag-runner@"
             "project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com"
         ),
         "observed_permission_footprint": ["storage.objects.create"],
@@ -36,7 +36,7 @@ def action_envelope() -> dict[str, object]:
         "parameters": {},
         "target": (
             "projects/project-551b0c2b-9622-4479-b23/buckets/"
-            "verisentinel-flag-project-551b0c2b-9622-4479-b23"
+            "verisentinel-tf-flag-project-551b0c2b-9622-4479-b23"
         ),
     }
 

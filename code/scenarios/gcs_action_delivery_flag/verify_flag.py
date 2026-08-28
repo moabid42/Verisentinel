@@ -12,12 +12,12 @@ EXPECTED_ACTION_ID = (
     "gcp-public-buckets-privilege-escalation:6"
 )
 EXPECTED_IDENTITY = (
-    "verisentinel-flag-runner@"
+    "verisentinel-tf-flag-runner@"
     "project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com"
 )
 EXPECTED_TARGET = (
     "projects/project-551b0c2b-9622-4479-b23/buckets/"
-    "verisentinel-flag-project-551b0c2b-9622-4479-b23"
+    "verisentinel-tf-flag-project-551b0c2b-9622-4479-b23"
 )
 EXPECTED_KEYS = {
     "action_id",

@@ -209,12 +209,22 @@ class ProposalBatch(ImmutableModel):
     model: str
 
 
+class ActionCommand(ImmutableModel):
+    """Non-executable preview of one registered typed action."""
+
+    action_id: str = Field(pattern=r"^technique:\S+$")
+    display: str = Field(min_length=1, max_length=4096)
+    provider_operation: Literal["catalog.technique"] = "catalog.technique"
+    parameter_model: Literal["technique.none.v1"] = "technique.none.v1"
+
+
 class CandidateCard(ImmutableModel):
     proposal: Proposal
     validation: CandidateValidationResult
     required_permissions: tuple[str, ...]
     technique_title: str = ""
     expected_capabilities: tuple[str, ...] = ()
+    action_command: ActionCommand | None = None
 
 
 class DecisionKind(StrEnum):
@@ -371,4 +381,6 @@ class CycleResult(ImmutableModel):
     proposal_round: int
     review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION
     candidates: tuple[CandidateCard, ...] = ()
+    execution_observation: ExecutionObservation | None = None
+    resulting_state_version: str | None = None
     message: str

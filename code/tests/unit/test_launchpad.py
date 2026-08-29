@@ -4,6 +4,7 @@ import pytest
 
 from core.errors import DataConsistencyError
 from core.models import (
+    ActionCommand,
     CandidateCard,
     CandidateValidationResult,
     DecisionKind,
@@ -66,6 +67,25 @@ def test_launchpad_persists_review_stage(tmp_path: Path) -> None:
 
     assert published.review_stage == ReviewStage.ACTION_EXECUTION
     assert service.candidates("engagement").review_stage == ReviewStage.ACTION_EXECUTION
+
+
+def test_launchpad_persists_typed_action_command_preview(tmp_path: Path) -> None:
+    service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
+    action_card = card("candidate-1").model_copy(
+        update={
+            "action_command": ActionCommand(
+                action_id="technique:technique",
+                display=(
+                    "storage.objects.create "
+                    "gs://scenario-target/actions/<approval_id>.json"
+                ),
+            )
+        }
+    )
+
+    published = service.publish(candidate_set(action_card))
+
+    assert published.candidates[0].action_command == action_card.action_command
 
 
 def test_launchpad_rejects_more_than_three_candidates(tmp_path: Path) -> None:

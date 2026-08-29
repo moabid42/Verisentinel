@@ -225,6 +225,13 @@ class DecisionKind(StrEnum):
     TERMINATE = "terminate"
 
 
+class ReviewStage(StrEnum):
+    """Operator review stage for an active engagement."""
+
+    TECHNIQUE_SELECTION = "technique_selection"
+    ACTION_EXECUTION = "action_execution"
+
+
 class OperatorDecision(ImmutableModel):
     engagement_id: str
     decision: DecisionKind
@@ -344,6 +351,8 @@ class Engagement(StrictModel):
     excluded_technique_ids: tuple[str, ...] = ()
     rejection_feedback: tuple[str, ...] = ()
     pending_approval_id: str | None = None
+    review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION
+    selected_technique_id: str | None = None
     last_error: str | None = None
 
 
@@ -360,5 +369,6 @@ class CycleResult(ImmutableModel):
     engagement_id: str
     status: EngagementStatus
     proposal_round: int
+    review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION
     candidates: tuple[CandidateCard, ...] = ()
     message: str

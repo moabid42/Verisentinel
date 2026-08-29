@@ -9,6 +9,7 @@ from core.models import (
     DecisionKind,
     OperatorDecision,
     Proposal,
+    ReviewStage,
 )
 from launchpad.models import CandidateSet
 from launchpad.repository import LaunchpadRepository
@@ -52,6 +53,19 @@ def candidate_set(*cards: CandidateCard) -> CandidateSet:
         matrix_version="matrix",
         candidates=cards,
     )
+
+
+def test_launchpad_persists_review_stage(tmp_path: Path) -> None:
+    service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
+
+    published = service.publish(
+        candidate_set(card("candidate-1")).model_copy(
+            update={"review_stage": ReviewStage.ACTION_EXECUTION}
+        )
+    )
+
+    assert published.review_stage == ReviewStage.ACTION_EXECUTION
+    assert service.candidates("engagement").review_stage == ReviewStage.ACTION_EXECUTION
 
 
 def test_launchpad_rejects_more_than_three_candidates(tmp_path: Path) -> None:

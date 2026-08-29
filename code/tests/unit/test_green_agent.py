@@ -13,6 +13,7 @@ from core.models import (
     Proposal,
     ProposalBatch,
     ProposalRequest,
+    ReviewStage,
 )
 from environment.brain import EnvironmentBrain
 from environment.repository import EnvironmentRepository
@@ -162,12 +163,14 @@ def test_proposal_model_input_excludes_credential_values(tmp_path: Path) -> None
     assert '"credential-a"' not in captured
 
 
-def test_explicit_approval_executes_and_versions_the_environment(tmp_path: Path) -> None:
+def test_technique_selection_precedes_approved_action_execution(
+    tmp_path: Path,
+) -> None:
     green, _, execution, engagement, proposal = services(tmp_path)
     cycle = green.cycle(engagement.engagement_id)
     old_state = engagement.state_version
 
-    next_cycle = green.decide(
+    action_cycle = green.decide(
         decision(
             green.get(engagement.engagement_id),
             DecisionKind.APPROVE,
@@ -175,13 +178,61 @@ def test_explicit_approval_executes_and_versions_the_environment(tmp_path: Path)
         )
     )
 
+    assert action_cycle.review_stage == ReviewStage.ACTION_EXECUTION
+    assert action_cycle.status == EngagementStatus.AWAITING_APPROVAL
+    assert action_cycle.candidates
+    assert execution.repository.executions.list_keys() == ()
+    assert green.environment.current(engagement.engagement_id).state_version == old_state
+    assert (
+        green.get(engagement.engagement_id).selected_technique_id
+        == proposal.technique_id
+    )
+
+    completed = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            action_cycle.candidates[0].proposal.candidate_id,
+        )
+    )
+
     assert execution.repository.executions.list_keys()
     assert green.environment.current(engagement.engagement_id).state_version != old_state
-    assert next_cycle.status == EngagementStatus.AWAITING_APPROVAL
-    assert not next_cycle.candidates
+    assert completed.status == EngagementStatus.COMPLETED
+    assert completed.review_stage == ReviewStage.ACTION_EXECUTION
+    assert not completed.candidates
     assert cycle.candidates[0].proposal.action_id in green.environment.current(
         engagement.engagement_id
     ).completed_actions
+
+
+def test_action_rejection_feedback_reguides_the_next_proposal(
+    tmp_path: Path,
+) -> None:
+    green, _, execution, engagement, proposal = services(tmp_path)
+    green.cycle(engagement.engagement_id)
+    action_cycle = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            proposal.candidate_id,
+        )
+    )
+    feedback = "Describe the bounded delivery operation more precisely."
+    rejected = decision(
+        green.get(engagement.engagement_id),
+        DecisionKind.REJECT,
+        action_cycle.candidates[0].proposal.candidate_id,
+    ).model_copy(update={"reason": feedback})
+
+    next_action = green.decide(rejected)
+
+    assert next_action.review_stage == ReviewStage.ACTION_EXECUTION
+    assert next_action.candidates
+    assert execution.repository.executions.list_keys() == ()
+    proposer = green.proposer
+    assert isinstance(proposer, StaticProposer)
+    assert feedback in proposer.requests[-1].previous_rejections[-1]
 
 
 def test_stale_operator_decision_executes_nothing(tmp_path: Path) -> None:

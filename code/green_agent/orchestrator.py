@@ -18,6 +18,7 @@ from core.models import (
     OperatorDecision,
     Proposal,
     ProposalRequest,
+    ReviewStage,
     StateValidationRequest,
     TechniqueActionParameters,
 )
@@ -50,7 +51,6 @@ class GreenAgent:
         paths: Paths | None = None,
         maximum_rounds_per_cycle: int = 3,
         proposals_per_round: int = 10,
-        auto_cycle_after_execution: bool = True,
         trace: DebugTrace | None = None,
     ) -> None:
         paths = paths or Paths()
@@ -63,7 +63,6 @@ class GreenAgent:
         self.execution = execution or ExecutionService(snapshots=self.snapshots, paths=paths)
         self.maximum_rounds_per_cycle = maximum_rounds_per_cycle
         self.proposals_per_round = proposals_per_round
-        self.auto_cycle_after_execution = auto_cycle_after_execution
         self.trace = trace
         self._lock = RLock()
 
@@ -111,9 +110,12 @@ class GreenAgent:
         with self._lock:
             engagement = self.get(engagement_id)
             self._require_active(engagement)
+            if engagement.review_stage == ReviewStage.ACTION_EXECUTION:
+                return self._action_cycle(engagement)
             self._trace(
                 "cycle_started",
                 engagement_id=engagement_id,
+                review_stage=engagement.review_stage,
                 proposal_round=engagement.proposal_round,
                 state_version=engagement.state_version,
                 matrix_version=engagement.matrix_version,
@@ -281,12 +283,180 @@ class GreenAgent:
                 engagement_id=engagement.engagement_id,
                 status=engagement.status,
                 proposal_round=engagement.proposal_round,
+                review_stage=engagement.review_stage,
                 candidates=tuple(accepted),
                 message=(
-                    f"Published {len(accepted)} admissible candidate(s) for explicit "
-                    "operator review."
+                    f"Published {len(accepted)} admissible technique candidate(s) "
+                    "for explicit selection."
                 ),
             )
+
+    def _action_cycle(self, engagement: Engagement) -> CycleResult:
+        """Propose one registered action for the selected technique."""
+        selected_technique_id = engagement.selected_technique_id
+        if selected_technique_id is None:
+            raise DataConsistencyError(
+                "action review requires an explicitly selected technique"
+            )
+        environment = self.environment.current(engagement.engagement_id)
+        if environment.matrix_version != engagement.matrix_version:
+            raise VersionConflictError(
+                "environment and engagement matrix versions differ"
+            )
+        state = self.environment.state_vector(
+            engagement.engagement_id,
+            engagement.identity,
+            engagement.target_scope,
+        )
+        matrix = self.snapshots.get(engagement.matrix_version)
+        technique = matrix.techniques.get(selected_technique_id)
+        if technique is None:
+            raise DataConsistencyError("selected technique is not in the matrix snapshot")
+        state_result = self.validator.validate_state(
+            StateValidationRequest(state=state)
+        )
+        engagement.status = EngagementStatus.PROPOSING
+        engagement.state_version = environment.state_version
+        engagement.candidates = {}
+        engagement.last_error = None
+        self.repository.save(engagement)
+        feedback = list(engagement.rejection_feedback)
+        accepted: list[CandidateCard] = []
+        seen_candidates: set[str] = set()
+
+        for cycle_round in range(1, self.maximum_rounds_per_cycle + 1):
+            proposal_request = ProposalRequest(
+                engagement_id=engagement.engagement_id,
+                objective=(
+                    "Propose the next concrete registered action for the selected "
+                    f"technique {selected_technique_id!r}."
+                ),
+                state_version=environment.state_version,
+                matrix_version=engagement.matrix_version,
+                identity=engagement.identity,
+                environment_summary={
+                    **self.environment.render_summary(environment),
+                    "target_scope": engagement.target_scope,
+                    "review_stage": ReviewStage.ACTION_EXECUTION.value,
+                    "selected_technique_id": selected_technique_id,
+                    "allowed_actions": (
+                        {
+                            "action_id": f"technique:{selected_technique_id}",
+                            "provider_operation": "catalog.technique",
+                            "parameter_model": "technique.none.v1",
+                        },
+                    ),
+                    "monitored_permission_count": len(
+                        state_result.monitored_permission_indices
+                    ),
+                    "unmonitored_permission_count": len(
+                        state_result.unmonitored_permission_indices
+                    ),
+                },
+                relevant_technique_ids=(selected_technique_id,),
+                previous_rejections=tuple(feedback[-50:]),
+                maximum_proposals=1,
+            )
+            self._trace(
+                "action_proposal_round_started",
+                engagement_id=engagement.engagement_id,
+                cycle_round=cycle_round,
+                selected_technique_id=selected_technique_id,
+                previous_rejection_count=len(proposal_request.previous_rejections),
+            )
+            batch = self.proposer.propose(proposal_request)
+            engagement.proposal_round += 1
+            self._trace(
+                "action_proposal_round_completed",
+                engagement_id=engagement.engagement_id,
+                cycle_round=cycle_round,
+                provider=batch.provider,
+                model=batch.model,
+                proposal_count=len(batch.proposals),
+            )
+            if not batch.proposals:
+                break
+            proposal = batch.proposals[0]
+            rejection = self._resolve_proposal(
+                proposal,
+                engagement,
+                matrix.techniques,
+                seen_candidates,
+            )
+            seen_candidates.add(proposal.candidate_id)
+            if rejection is None and proposal.technique_id != selected_technique_id:
+                rejection = "action proposal does not match the selected technique"
+            if rejection is not None:
+                feedback.append(rejection)
+                self._trace(
+                    "action_proposal_rejected",
+                    engagement_id=engagement.engagement_id,
+                    candidate_id=proposal.candidate_id,
+                    reason=rejection,
+                    stage="resolution",
+                )
+                continue
+            validation = self.validator.validate_candidate(
+                CandidateValidationRequest(
+                    candidate_id=proposal.candidate_id,
+                    technique_id=proposal.technique_id,
+                    state=state,
+                    matrix_version=engagement.matrix_version,
+                )
+            )
+            if not validation.admissible:
+                rejection = f"{proposal.action_id}: {validation.explanation}"
+                feedback.append(rejection)
+                self._trace(
+                    "action_proposal_rejected",
+                    engagement_id=engagement.engagement_id,
+                    candidate_id=proposal.candidate_id,
+                    reason=validation.explanation,
+                    stage="validation",
+                )
+                continue
+            accepted.append(
+                CandidateCard(
+                    proposal=proposal.model_copy(update={"rank": 1}),
+                    validation=validation,
+                    required_permissions=tuple(
+                        matrix.permissions[index]
+                        for index in technique.required_indices
+                    ),
+                    technique_title=technique.title,
+                    expected_capabilities=technique.grants,
+                )
+            )
+            self._trace(
+                "action_proposal_accepted",
+                engagement_id=engagement.engagement_id,
+                candidate_id=proposal.candidate_id,
+                action_id=proposal.action_id,
+                validator_result_id=validation.result_id,
+            )
+            break
+
+        engagement.status = EngagementStatus.AWAITING_APPROVAL
+        engagement.candidates = {
+            card.proposal.candidate_id: card for card in accepted
+        }
+        engagement.rejection_feedback = tuple(feedback[-100:])
+        self.repository.save(engagement)
+        self.execution.authorize(self._authorization(engagement, enabled=True))
+        self._publish(engagement, tuple(accepted))
+        self._trace(
+            "action_candidates_published",
+            engagement_id=engagement.engagement_id,
+            candidate_ids=[card.proposal.candidate_id for card in accepted],
+            candidate_count=len(accepted),
+            selected_technique_id=selected_technique_id,
+            state_version=engagement.state_version,
+        )
+        return self._result(
+            engagement,
+            f"Published {len(accepted)} validated action command(s) for "
+            "explicit execution approval.",
+        )
 
     def decide(self, decision: OperatorDecision) -> CycleResult:
         with self._lock:
@@ -338,7 +508,7 @@ class GreenAgent:
                 engagement.rejection_feedback = tuple(
                     [
                         *engagement.rejection_feedback,
-                        f"{candidate.proposal.technique_id}: "
+                        f"{candidate.proposal.action_id}: "
                         f"operator rejected: {decision.reason or 'no reason supplied'}",
                     ][-100:]
                 )
@@ -359,7 +529,68 @@ class GreenAgent:
                     "Candidate rejected; remaining candidates still require explicit review.",
                 )
 
+            if engagement.review_stage == ReviewStage.TECHNIQUE_SELECTION:
+                return self._select_technique(
+                    engagement,
+                    candidate,
+                    environment.state_version,
+                )
             return self._approve(engagement, candidate, decision, environment.state_version)
+
+    def _select_technique(
+        self,
+        engagement: Engagement,
+        candidate: CandidateCard,
+        current_state_version: str,
+    ) -> CycleResult:
+        """Bind a validated technique without authorizing execution."""
+        state = self.environment.state_vector(
+            engagement.engagement_id,
+            engagement.identity,
+            engagement.target_scope,
+        )
+        validation = self.validator.validate_candidate(
+            CandidateValidationRequest(
+                candidate_id=candidate.proposal.candidate_id,
+                technique_id=candidate.proposal.technique_id,
+                state=state,
+                matrix_version=engagement.matrix_version,
+            )
+        )
+        self._trace(
+            "technique_revalidated",
+            engagement_id=engagement.engagement_id,
+            candidate_id=candidate.proposal.candidate_id,
+            technique_id=candidate.proposal.technique_id,
+            admissible=validation.admissible,
+            validator_result_id=validation.result_id,
+        )
+        if not validation.admissible:
+            engagement.status = EngagementStatus.CREATED
+            engagement.candidates = {}
+            engagement.rejection_feedback = tuple(
+                [*engagement.rejection_feedback, validation.explanation][-100:]
+            )
+            self.repository.save(engagement)
+            raise VersionConflictError(
+                "selected technique is no longer admissible and must be reproposed"
+            )
+        engagement.status = EngagementStatus.CREATED
+        engagement.state_version = current_state_version
+        engagement.review_stage = ReviewStage.ACTION_EXECUTION
+        engagement.selected_technique_id = candidate.proposal.technique_id
+        engagement.candidates = {}
+        engagement.excluded_technique_ids = ()
+        engagement.rejection_feedback = ()
+        self.repository.save(engagement)
+        self._trace(
+            "technique_selected",
+            engagement_id=engagement.engagement_id,
+            candidate_id=candidate.proposal.candidate_id,
+            technique_id=candidate.proposal.technique_id,
+            state_version=current_state_version,
+        )
+        return self.cycle(engagement.engagement_id)
 
     def _approve(
         self,
@@ -484,15 +715,14 @@ class GreenAgent:
             self.execution.authorize(self._authorization(engagement, enabled=False))
             return self._result(engagement, "Approved action failed; engagement stopped.")
 
-        engagement.status = EngagementStatus.CREATED
-        engagement.excluded_technique_ids = ()
+        engagement.status = EngagementStatus.COMPLETED
         engagement.rejection_feedback = ()
         self.repository.save(engagement)
-        if self.auto_cycle_after_execution:
-            return self.cycle(engagement.engagement_id)
+        self.execution.authorize(self._authorization(engagement, enabled=False))
+        self._publish(engagement, ())
         return self._result(
             engagement,
-            "Approved action executed; automatic proposal cycling is disabled.",
+            "Approved action command executed; engagement goal stage completed.",
         )
 
     @staticmethod
@@ -541,6 +771,7 @@ class GreenAgent:
                 state_version=engagement.state_version,
                 matrix_version=engagement.matrix_version,
                 candidates=candidates,
+                review_stage=engagement.review_stage,
                 identity=engagement.identity,
                 scope=engagement.target_scope,
                 state_analysis=state_analysis,
@@ -575,6 +806,7 @@ class GreenAgent:
             engagement_id=engagement.engagement_id,
             status=engagement.status,
             proposal_round=engagement.proposal_round,
+            review_stage=engagement.review_stage,
             candidates=candidates,
             message=message,
         )

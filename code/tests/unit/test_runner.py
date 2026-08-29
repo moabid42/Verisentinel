@@ -1010,9 +1010,11 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
         update={
             "action_command": ActionCommand(
                 action_id=candidate().proposal.action_id,
+                approval_id="approval_" + "1" * 32,
                 display=(
-                    "storage.objects.create "
-                    "gs://scenario-target/actions/<approval_id>.json"
+                    "/usr/local/bin/python /opt/verisentinel/gcs_upload.py "
+                    "--bucket scenario-target --object "
+                    f"actions/approval_{'1' * 32}.json"
                 ),
             )
         }
@@ -1026,7 +1028,9 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
     rendered = stream.getvalue()
     assert "ACTION COMMAND REVIEW" in rendered
     assert "EXECUTION APPROVAL REQUIRED" in rendered
-    assert "storage.objects.create" in rendered
+    assert "/usr/local/bin/python" in rendered
+    assert "gcs_upload.py" in rendered
+    assert "<approval_id>" not in rendered
     assert "Reason" in rendered
     assert "Covered" not in rendered
     assert "Validation" not in rendered
@@ -1047,6 +1051,14 @@ def test_terminal_renders_approved_command_output() -> None:
         api_response_summary=(
             "created gs://scenario-target/actions/approval.json"
         ),
+        command_stdout=(
+            '{"bucket":"scenario-target","name":"actions/approval.json"}\n'
+        ),
+        explanation="The upload command created the approved object.",
+        next_steps=(
+            "Retrieve and inspect the created object.",
+            "Run env show to inspect environment state.",
+        ),
         discovered_resources=(
             "gs://scenario-target/actions/approval.json",
         ),
@@ -1054,9 +1066,11 @@ def test_terminal_renders_approved_command_output() -> None:
 
     command = ActionCommand(
         action_id="technique:test",
+        approval_id="approval_" + "1" * 32,
         display=(
-            "storage.objects.create "
-            "gs://scenario-target/actions/<approval_id>.json"
+            "/usr/local/bin/python /opt/verisentinel/gcs_upload.py "
+            "--bucket scenario-target --object "
+            f"actions/approval_{'1' * 32}.json"
         ),
     )
 
@@ -1068,7 +1082,12 @@ def test_terminal_renders_approved_command_output() -> None:
 
     rendered = stream.getvalue()
     assert "COMMAND OUTPUT  SUCCESS" in rendered
-    assert "created gs://scenario-target/actions/approval.json" in rendered
-    assert "storage.objects.create" in rendered
+    assert '"bucket":"scenario-target"' in rendered
+    assert "The upload command created the approved object." in rendered
+    assert "1. Retrieve and inspect the created object." in rendered
+    assert "/usr/local/bin/python" in rendered
     assert "gcp-approval" in rendered
     assert "sha256:state" in rendered
+    assert rendered.index("Stdout") < rendered.index("Explanation")
+    assert rendered.index("Explanation") < rendered.index("Next steps")
+    assert "<approval_id>" not in rendered

@@ -724,14 +724,22 @@ class TerminalUI:
         state_version: str | None,
     ) -> None:
         """Render the bounded output returned by one approved command."""
+        stdout = observation.command_stdout or "(no stdout)"
+        explanation = observation.explanation or observation.api_response_summary
+        next_steps = "\n".join(
+            f"{index}. {step}"
+            for index, step in enumerate(observation.next_steps, start=1)
+        ) or "None suggested."
         self._key_values(
             "COMMAND OUTPUT",
             (
+                ("Stdout", stdout),
+                ("Explanation", explanation),
+                ("Next steps", next_steps),
                 (
                     "Command",
                     command.display if command is not None else observation.action_id,
                 ),
-                ("Output", observation.api_response_summary),
                 ("Resources", _joined(observation.discovered_resources)),
                 ("Execution", observation.execution_id),
                 ("State", state_version or "unchanged"),

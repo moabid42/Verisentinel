@@ -142,14 +142,21 @@ technique. The next screen shows only a command preview in this form and the
 proposer's short reason:
 
 ```text
-storage.objects.create \
-  gs://verisentinel-tf-flag-project-551b0c2b-9622-4479-b23/actions/<approval_id>.json
+/usr/local/bin/python /opt/verisentinel/gcs_upload.py \
+  --bucket verisentinel-tf-flag-project-551b0c2b-9622-4479-b23 \
+  --object actions/approval_11111111111111111111111111111111.json
 ```
+
+The actual screen contains its own resolved 32-character identifier; it never
+contains `<approval_id>`. The gateway executes exactly the displayed executable
+and arguments, passing the approved action envelope and temporary credential to
+the command through private standard input rather than process arguments.
 
 Reject with `r1` to provide feedback and request a revised proposal, or enter
 `1` to approve and execute the displayed registered command. A successful
-execution prints `COMMAND OUTPUT` with the resolved object URI and completes
-the engagement. It does not start another top-level proposal cycle.
+execution prints `COMMAND OUTPUT` with raw GCS API stdout first, then an
+explanation and possible next steps. It completes the engagement instead of
+starting another top-level proposal cycle.
 
 ## Retrieve and verify the flag
 

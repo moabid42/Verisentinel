@@ -89,19 +89,23 @@ The action stage displays only the concrete typed command and the proposer's
 one- or two-sentence reason. For the GCS flag scenario, the preview is:
 
 ```text
-storage.objects.create gs://BUCKET/actions/<approval_id>.json
+/usr/local/bin/python /opt/verisentinel/gcs_upload.py --bucket BUCKET \
+  --object actions/approval_11111111111111111111111111111111.json
 ```
 
-`<approval_id>` remains a placeholder because the one-time approval identifier
-is generated only after the operator explicitly chooses execute. Enter `r1`,
-`a`, or `x` to reject a command, request alternatives, or reject all. The shell
-then requires feedback and sends it to the next bounded proposal round. Enter
-`1` to execute the displayed registered operation. Arbitrary shell strings are
-never accepted.
+The displayed approval identifier is preallocated for the proposal, so the
+object name contains no placeholder. Preallocation does not authorize the
+command: the approval record is created and bound to that same identifier only
+after the operator chooses execute. Rejected identifiers are discarded. Enter
+`r1`, `a`, or `x` to reject a command, request alternatives, or reject all. The
+shell then requires feedback and sends it to the next bounded proposal round.
+Enter `1` to execute the displayed registered operation. Arbitrary shell
+strings are never accepted.
 
-After execution, `COMMAND OUTPUT` reports success or failure, the exact provider
-response, created or discovered resources, execution ID, and resulting
-Environment Brain state. A successful command completes the current engagement
+After execution, `COMMAND OUTPUT` shows the command's bounded raw stdout first,
+followed by an explanation and numbered possible next steps. The exact command,
+created or discovered resources, execution ID, and resulting Environment Brain
+state follow as metadata. A successful command completes the current engagement
 instead of automatically launching another top-level technique search.
 
 Enter `exit` or `/back` to return to the top-level prompt without disconnecting.

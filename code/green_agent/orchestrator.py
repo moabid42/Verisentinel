@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from threading import RLock
 
 from core.config import Paths
@@ -640,8 +641,17 @@ class GreenAgent:
             )
 
         arguments = TechniqueActionParameters()
+        action_command = candidate.action_command
+        if (
+            action_command is None
+            or action_command.action_id != candidate.proposal.action_id
+            or action_command.approval_id is None
+        ):
+            raise DataConsistencyError(
+                "execution candidate has no matching typed command"
+            )
         approval = ApprovalRecord(
-            approval_id=new_id("approval"),
+            approval_id=action_command.approval_id,
             engagement_id=engagement.engagement_id,
             candidate_id=candidate.proposal.candidate_id,
             action_id=candidate.proposal.action_id,
@@ -751,6 +761,7 @@ class GreenAgent:
         required_permissions: tuple[str, ...],
     ) -> ActionCommand:
         """Build a factual preview for one registered provider operation."""
+        approval_id = new_id("approval")
         parts = target.split("/")
         if (
             "storage.objects.create" in required_permissions
@@ -758,13 +769,23 @@ class GreenAgent:
             and parts[0] == "projects"
             and parts[2] == "buckets"
         ):
-            display = (
-                "storage.objects.create "
-                f"gs://{parts[3]}/actions/<approval_id>.json"
+            display = shlex.join(
+                (
+                    "/usr/local/bin/python",
+                    "/opt/verisentinel/gcs_upload.py",
+                    "--bucket",
+                    parts[3],
+                    "--object",
+                    f"actions/{approval_id}.json",
+                )
             )
         else:
             display = f"catalog.technique {action_id} --target {target}"
-        return ActionCommand(action_id=action_id, display=display)
+        return ActionCommand(
+            action_id=action_id,
+            approval_id=approval_id,
+            display=display,
+        )
 
     @staticmethod
     def _resolve_proposal(

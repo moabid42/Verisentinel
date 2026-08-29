@@ -62,6 +62,7 @@ def test_launchpad_persists_review_stage(tmp_path: Path) -> None:
         update={
             "action_command": ActionCommand(
                 action_id="technique:technique",
+                approval_id="approval_" + "1" * 32,
                 display="catalog.technique technique:technique",
             )
         }
@@ -83,9 +84,11 @@ def test_launchpad_persists_typed_action_command_preview(tmp_path: Path) -> None
         update={
             "action_command": ActionCommand(
                 action_id="technique:technique",
+                approval_id="approval_" + "1" * 32,
                 display=(
-                    "storage.objects.create "
-                    "gs://scenario-target/actions/<approval_id>.json"
+                    "/usr/local/bin/python /opt/verisentinel/gcs_upload.py "
+                    "--bucket scenario-target --object "
+                    f"actions/approval_{'1' * 32}.json"
                 ),
             )
         }

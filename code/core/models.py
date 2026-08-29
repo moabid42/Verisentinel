@@ -131,6 +131,9 @@ class ExecutionObservation(ImmutableModel):
     target: str
     success: bool
     api_response_summary: str = Field(max_length=4096)
+    command_stdout: str = Field(default="", max_length=32_768)
+    explanation: str = Field(default="", max_length=4096)
+    next_steps: tuple[str, ...] = ()
     gained_permissions: tuple[str, ...] = ()
     revoked_permissions: tuple[str, ...] = ()
     gained_capabilities: tuple[str, ...] = ()
@@ -210,9 +213,13 @@ class ProposalBatch(ImmutableModel):
 
 
 class ActionCommand(ImmutableModel):
-    """Non-executable preview of one registered typed action."""
+    """Exact command preview for one registered typed action."""
 
     action_id: str = Field(pattern=r"^technique:\S+$")
+    approval_id: str | None = Field(
+        default=None,
+        pattern=r"^approval_[0-9a-f]{32}$",
+    )
     display: str = Field(min_length=1, max_length=4096)
     provider_operation: Literal["catalog.technique"] = "catalog.technique"
     parameter_model: Literal["technique.none.v1"] = "technique.none.v1"

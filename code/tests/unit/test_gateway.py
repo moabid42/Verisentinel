@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -192,34 +193,50 @@ def test_gateway_configuration_rejects_unexpected_fields(tmp_path: Path) -> None
         load_configuration(path)
 
 
-def test_gateway_upload_returns_exact_created_object_uri(monkeypatch) -> None:
-    class Response:
-        def __enter__(self):
-            return self
+def test_gateway_runs_exact_previewed_command_without_credential_arguments(
+    monkeypatch,
+) -> None:
+    approval_id = "approval_" + "1" * 32
+    command_stdout = b'{"bucket":"scenario-target","name":"action.json"}\n'
+    calls: list[tuple[tuple[str, ...], dict]] = []
 
-        def __exit__(self, *args):
-            del args
+    def run(arguments: tuple[str, ...], **kwargs) -> subprocess.CompletedProcess:
+        calls.append((arguments, kwargs))
+        return subprocess.CompletedProcess(
+            arguments,
+            returncode=0,
+            stdout=command_stdout,
+            stderr=b"",
+        )
 
-        def read(self, limit: int) -> bytes:
-            del limit
-            return b"{}"
-
-    monkeypatch.setattr(
-        gateway_entrypoint,
-        "urlopen",
-        lambda request, timeout: Response(),
-    )
+    monkeypatch.setattr(gateway_entrypoint.subprocess, "run", run)
     handler = object.__new__(Handler)
     handler.configuration = {
         "infrastructure_path": "projects/project/buckets/scenario-target",
         "principal": "start@project.iam.gserviceaccount.com",
     }
 
-    object_uri = handler._upload(
-        {"approval_id": "approval_" + "1" * 32},
+    object_uri, stdout = handler._upload(
+        {"approval_id": approval_id},
         "Bearer synthetic",
     )
 
     assert object_uri == (
-        "gs://scenario-target/actions/approval_" + "1" * 32 + ".json"
+        f"gs://scenario-target/actions/{approval_id}.json"
     )
+    assert stdout == command_stdout.decode()
+    arguments, options = calls[0]
+    assert arguments == (
+        "/usr/local/bin/python",
+        "/opt/verisentinel/gcs_upload.py",
+        "--bucket",
+        "scenario-target",
+        "--object",
+        f"actions/{approval_id}.json",
+    )
+    assert "synthetic" not in " ".join(arguments)
+    command_input = json.loads(options["input"])
+    assert command_input["authorization"] == "Bearer synthetic"
+    assert command_input["document"]["approval_id"] == approval_id
+    assert options["capture_output"] is True
+    assert options["check"] is False

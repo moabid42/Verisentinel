@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 CONFIGURATION_PATH = Path("/run/verisentinel/connection.json")
 MAXIMUM_REQUEST_BYTES = 65_536
 MAXIMUM_RESPONSE_BYTES = 65_536
+UPLOAD_COMMAND = (
+    "/usr/local/bin/python",
+    "/opt/verisentinel/gcs_upload.py",
+)
 _REQUEST_KEYS = {
     "action_id",
     "approval_id",
@@ -61,8 +63,8 @@ class Handler(BaseHTTPRequestHandler):
             document, authorization = self._request()
             if document["identity"] != self.configuration["principal"]:
                 raise GatewayError("principal mismatch")
-            object_uri = self._upload(document, authorization)
-            self._respond(document, object_uri)
+            object_uri, command_stdout = self._upload(document, authorization)
+            self._respond(document, object_uri, command_stdout)
         except GatewayError:
             self.send_error(403)
 
@@ -90,43 +92,70 @@ class Handler(BaseHTTPRequestHandler):
             raise GatewayError("parameters invalid")
         return document, authorization
 
-    def _upload(self, document: dict[str, Any], authorization: str) -> str:
+    def _upload(
+        self,
+        document: dict[str, Any],
+        authorization: str,
+    ) -> tuple[str, str]:
         bucket = _bucket(self.configuration["infrastructure_path"])
         name = f"actions/{document['approval_id']}.json"
         object_uri = f"gs://{bucket}/{name}"
-        encoded = json.dumps(
-            document,
+        encoded_input = json.dumps(
+            {
+                "authorization": authorization,
+                "document": document,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        query = urlencode({"uploadType": "media", "name": name})
-        request = Request(
-            f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o?{query}",
-            data=encoded,
-            headers={
-                "Authorization": authorization,
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with urlopen(request, timeout=20.0) as response:
-                response.read(MAXIMUM_RESPONSE_BYTES + 1)
-        except (HTTPError, URLError, OSError, TimeoutError):
+            result = subprocess.run(
+                (*UPLOAD_COMMAND, "--bucket", bucket, "--object", name),
+                input=encoded_input,
+                capture_output=True,
+                check=False,
+                timeout=25.0,
+            )
+        except (OSError, subprocess.SubprocessError):
             raise GatewayError("delivery failed") from None
-        return object_uri
+        if (
+            result.returncode != 0
+            or result.stderr
+            or not result.stdout
+            or len(result.stdout) > MAXIMUM_RESPONSE_BYTES
+        ):
+            raise GatewayError("delivery failed")
+        try:
+            command_stdout = result.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            raise GatewayError("delivery failed") from None
+        return object_uri, command_stdout
 
-    def _respond(self, document: dict[str, Any], object_uri: str) -> None:
+    def _respond(
+        self,
+        document: dict[str, Any],
+        object_uri: str,
+        command_stdout: str,
+    ) -> None:
         observation = {
             "action_id": document["action_id"],
             "api_response_summary": f"created {object_uri}",
+            "command_stdout": command_stdout,
             "discovered_resources": [object_uri],
             "engagement_id": document["engagement_id"],
+            "explanation": (
+                "The fixed upload command created the approved action envelope "
+                "with the connected service-account credential."
+            ),
             "execution_id": f"gcp-{document['approval_id']}",
             "gained_capabilities": [],
             "gained_permissions": [],
             "identity": document["identity"],
             "observed_permission_footprint": document["observed_permission_footprint"],
+            "next_steps": [
+                f"Retrieve and inspect {object_uri}.",
+                "Run env show to inspect the resulting environment state.",
+            ],
             "revoked_permissions": [],
             "success": True,
             "target": document["target"],

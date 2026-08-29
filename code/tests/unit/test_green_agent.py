@@ -1,3 +1,4 @@
+import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -138,6 +139,25 @@ def decision(engagement, kind: DecisionKind, candidate_id: str | None = None):
     )
 
 
+def test_gcs_action_command_has_resolved_approval_object() -> None:
+    command = GreenAgent._action_command(
+        "technique:test",
+        "projects/project/buckets/scenario-target",
+        ("storage.objects.create",),
+    )
+
+    assert shlex.split(command.display) == [
+        "/usr/local/bin/python",
+        "/opt/verisentinel/gcs_upload.py",
+        "--bucket",
+        "scenario-target",
+        "--object",
+        f"actions/{command.approval_id}.json",
+    ]
+    assert "<" not in command.display
+    assert ">" not in command.display
+
+
 def test_green_agent_publishes_only_admissible_candidates(tmp_path: Path) -> None:
     green, launchpad, execution, engagement, proposal = services(tmp_path)
 
@@ -182,8 +202,8 @@ def test_technique_selection_precedes_approved_action_execution(
     assert action_cycle.status == EngagementStatus.AWAITING_APPROVAL
     assert action_cycle.candidates
     assert action_cycle.candidates[0].action_command is not None
-    assert action_cycle.candidates[0].action_command.display.startswith(
-        "catalog.technique"
+    assert action_cycle.candidates[0].action_command.approval_id.startswith(
+        "approval_"
     )
     assert execution.repository.executions.list_keys() == ()
     assert green.environment.current(engagement.engagement_id).state_version == old_state
@@ -208,6 +228,10 @@ def test_technique_selection_precedes_approved_action_execution(
     assert completed.execution_observation is not None
     assert completed.execution_observation.success
     assert completed.executed_command == action_cycle.candidates[0].action_command
+    execution_id = execution.repository.executions.list_keys()[0]
+    assert execution.repository.get(execution_id).approval.approval_id == (
+        action_cycle.candidates[0].action_command.approval_id
+    )
     assert completed.resulting_state_version == green.environment.current(
         engagement.engagement_id
     ).state_version

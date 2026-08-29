@@ -9,9 +9,11 @@ from typer.testing import CliRunner
 
 import runner.cli as cli_module
 from core.models import (
+    ActionCommand,
     CandidateCard,
     CandidateValidationResult,
     DecisionKind,
+    ExecutionObservation,
     Proposal,
     ReviewStage,
 )
@@ -1004,13 +1006,69 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
         Console(file=stream, color_system=None, highlight=False, width=100)
     )
 
+    action_card = candidate().model_copy(
+        update={
+            "action_command": ActionCommand(
+                action_id=candidate().proposal.action_id,
+                display=(
+                    "storage.objects.create "
+                    "gs://scenario-target/actions/<approval_id>.json"
+                ),
+            )
+        }
+    )
+
     terminal.candidates(
-        (candidate(),),
+        (action_card,),
         review_stage=ReviewStage.ACTION_EXECUTION,
     )
 
     rendered = stream.getvalue()
     assert "ACTION COMMAND REVIEW" in rendered
     assert "EXECUTION APPROVAL REQUIRED" in rendered
-    assert "Typed command" in rendered
-    assert "Execute once after explicit approval" in rendered
+    assert "storage.objects.create" in rendered
+    assert "Reason" in rendered
+    assert "Covered" not in rendered
+    assert "Validation" not in rendered
+
+
+def test_terminal_renders_approved_command_output() -> None:
+    stream = StringIO()
+    terminal = TerminalUI(
+        Console(file=stream, color_system=None, highlight=False, width=100)
+    )
+    observation = ExecutionObservation(
+        execution_id="gcp-approval",
+        engagement_id="engagement",
+        action_id="technique:test",
+        identity="identity",
+        target="projects/project/buckets/scenario-target",
+        success=True,
+        api_response_summary=(
+            "created gs://scenario-target/actions/approval.json"
+        ),
+        discovered_resources=(
+            "gs://scenario-target/actions/approval.json",
+        ),
+    )
+
+    command = ActionCommand(
+        action_id="technique:test",
+        display=(
+            "storage.objects.create "
+            "gs://scenario-target/actions/<approval_id>.json"
+        ),
+    )
+
+    terminal.command_output(
+        observation,
+        command=command,
+        state_version="sha256:state",
+    )
+
+    rendered = stream.getvalue()
+    assert "COMMAND OUTPUT  SUCCESS" in rendered
+    assert "created gs://scenario-target/actions/approval.json" in rendered
+    assert "storage.objects.create" in rendered
+    assert "gcp-approval" in rendered
+    assert "sha256:state" in rendered

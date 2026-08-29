@@ -3,9 +3,10 @@ from pathlib import Path
 
 import pytest
 
+import execution.gateway.entrypoint as gateway_entrypoint
 from execution.capsule.provider import CapsuleConfiguration
 from execution.capsule.runtime import DockerRuntimeError, ProcessOutput
-from execution.gateway.entrypoint import GatewayError, load_configuration
+from execution.gateway.entrypoint import GatewayError, Handler, load_configuration
 from execution.gateway.manager import GatewayBuilder, GatewayManager
 
 IMAGE_ID = "sha256:" + "a" * 64
@@ -189,3 +190,36 @@ def test_gateway_configuration_rejects_unexpected_fields(tmp_path: Path) -> None
 
     with pytest.raises(GatewayError, match="configuration invalid"):
         load_configuration(path)
+
+
+def test_gateway_upload_returns_exact_created_object_uri(monkeypatch) -> None:
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            del args
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return b"{}"
+
+    monkeypatch.setattr(
+        gateway_entrypoint,
+        "urlopen",
+        lambda request, timeout: Response(),
+    )
+    handler = object.__new__(Handler)
+    handler.configuration = {
+        "infrastructure_path": "projects/project/buckets/scenario-target",
+        "principal": "start@project.iam.gserviceaccount.com",
+    }
+
+    object_uri = handler._upload(
+        {"approval_id": "approval_" + "1" * 32},
+        "Bearer synthetic",
+    )
+
+    assert object_uri == (
+        "gs://scenario-target/actions/approval_" + "1" * 32 + ".json"
+    )

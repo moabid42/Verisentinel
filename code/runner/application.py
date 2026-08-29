@@ -643,7 +643,14 @@ def _operator_loop(
         )
         launchpad.decide(decision)
         result = planner.decide(decision)
-        terminal.cycle_message(result.message)
+        if result.execution_observation is not None:
+            terminal.command_output(
+                result.execution_observation,
+                command=result.executed_command,
+                state_version=result.resulting_state_version,
+            )
+        else:
+            terminal.cycle_message(result.message)
 
     trace.emit(
         "runner",

@@ -61,8 +61,8 @@ class Handler(BaseHTTPRequestHandler):
             document, authorization = self._request()
             if document["identity"] != self.configuration["principal"]:
                 raise GatewayError("principal mismatch")
-            self._upload(document, authorization)
-            self._respond(document)
+            object_uri = self._upload(document, authorization)
+            self._respond(document, object_uri)
         except GatewayError:
             self.send_error(403)
 
@@ -90,9 +90,10 @@ class Handler(BaseHTTPRequestHandler):
             raise GatewayError("parameters invalid")
         return document, authorization
 
-    def _upload(self, document: dict[str, Any], authorization: str) -> None:
+    def _upload(self, document: dict[str, Any], authorization: str) -> str:
         bucket = _bucket(self.configuration["infrastructure_path"])
         name = f"actions/{document['approval_id']}.json"
+        object_uri = f"gs://{bucket}/{name}"
         encoded = json.dumps(
             document,
             sort_keys=True,
@@ -113,12 +114,13 @@ class Handler(BaseHTTPRequestHandler):
                 response.read(MAXIMUM_RESPONSE_BYTES + 1)
         except (HTTPError, URLError, OSError, TimeoutError):
             raise GatewayError("delivery failed") from None
+        return object_uri
 
-    def _respond(self, document: dict[str, Any]) -> None:
+    def _respond(self, document: dict[str, Any], object_uri: str) -> None:
         observation = {
             "action_id": document["action_id"],
-            "api_response_summary": ("approved action delivered to scenario infrastructure"),
-            "discovered_resources": [self.configuration["infrastructure_path"]],
+            "api_response_summary": f"created {object_uri}",
+            "discovered_resources": [object_uri],
             "engagement_id": document["engagement_id"],
             "execution_id": f"gcp-{document['approval_id']}",
             "gained_capabilities": [],

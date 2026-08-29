@@ -12,7 +12,13 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
-from core.models import CandidateCard, DecisionKind, ReviewStage
+from core.models import (
+    ActionCommand,
+    CandidateCard,
+    DecisionKind,
+    ExecutionObservation,
+    ReviewStage,
+)
 from execution.capsule.doctor import CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
 from runner.connection import SandboxConnection
@@ -648,24 +654,30 @@ class TerminalUI:
             details = Table.grid(padding=(0, 2))
             details.add_column(style="label", no_wrap=True)
             details.add_column()
-            details.add_row("Technique", proposal.technique_id)
             if action_review:
-                details.add_row("Typed command", proposal.action_id)
-                details.add_row("Operation", "catalog.technique")
-                details.add_row("Parameters", "none")
-                details.add_row("Effect", "Execute once after explicit approval")
+                command = card.action_command
+                details.add_row(
+                    "Command",
+                    command.display if command is not None else "unavailable",
+                )
+                details.add_row("Reason", proposal.rationale)
             else:
+                details.add_row("Technique", proposal.technique_id)
                 details.add_row("Effect", "Select technique; do not execute")
-            details.add_row("Identity", proposal.identity)
-            details.add_row("Target", proposal.target)
-            details.add_row("Required", _joined(card.required_permissions))
-            details.add_row("Covered", _joined(validation.covered_permissions))
-            details.add_row("Uncovered", _joined(validation.uncovered_permissions))
-            details.add_row("Detections", _joined(validation.matching_detection_ids))
-            details.add_row("Capabilities", _joined(card.expected_capabilities))
-            details.add_row("Rationale", proposal.rationale)
-            details.add_row("Validation", validation.explanation)
-            title = card.technique_title or proposal.technique_id
+                details.add_row("Identity", proposal.identity)
+                details.add_row("Target", proposal.target)
+                details.add_row("Required", _joined(card.required_permissions))
+                details.add_row("Covered", _joined(validation.covered_permissions))
+                details.add_row("Uncovered", _joined(validation.uncovered_permissions))
+                details.add_row("Detections", _joined(validation.matching_detection_ids))
+                details.add_row("Capabilities", _joined(card.expected_capabilities))
+                details.add_row("Rationale", proposal.rationale)
+                details.add_row("Validation", validation.explanation)
+            title = (
+                "COMMAND"
+                if action_review
+                else card.technique_title or proposal.technique_id
+            )
             panel_title = Text()
             panel_title.append(f"{index:02d}", style="accent")
             panel_title.append(f"  {title}")
@@ -703,6 +715,30 @@ class TerminalUI:
     def cycle_message(self, message: str) -> None:
         """Render the outcome of one operator decision."""
         self.console.print(Panel(Text(message), border_style="cyan", padding=(0, 1)))
+
+    def command_output(
+        self,
+        observation: ExecutionObservation,
+        *,
+        command: ActionCommand | None,
+        state_version: str | None,
+    ) -> None:
+        """Render the bounded output returned by one approved command."""
+        self._key_values(
+            "COMMAND OUTPUT",
+            (
+                (
+                    "Command",
+                    command.display if command is not None else observation.action_id,
+                ),
+                ("Output", observation.api_response_summary),
+                ("Resources", _joined(observation.discovered_resources)),
+                ("Execution", observation.execution_id),
+                ("State", state_version or "unchanged"),
+            ),
+            state="SUCCESS" if observation.success else "FAILED",
+            state_style="success" if observation.success else "failure",
+        )
 
     def finished(self, *, failed: bool) -> None:
         """Render the terminal state of a scenario run."""

@@ -58,9 +58,17 @@ def candidate_set(*cards: CandidateCard) -> CandidateSet:
 
 def test_launchpad_persists_review_stage(tmp_path: Path) -> None:
     service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
+    action_card = card("candidate-1").model_copy(
+        update={
+            "action_command": ActionCommand(
+                action_id="technique:technique",
+                display="catalog.technique technique:technique",
+            )
+        }
+    )
 
     published = service.publish(
-        candidate_set(card("candidate-1")).model_copy(
+        candidate_set(action_card).model_copy(
             update={"review_stage": ReviewStage.ACTION_EXECUTION}
         )
     )
@@ -86,6 +94,18 @@ def test_launchpad_persists_typed_action_command_preview(tmp_path: Path) -> None
     published = service.publish(candidate_set(action_card))
 
     assert published.candidates[0].action_command == action_card.action_command
+
+
+def test_launchpad_rejects_action_review_without_command_preview(
+    tmp_path: Path,
+) -> None:
+    service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
+    action_set = candidate_set(card("candidate-1")).model_copy(
+        update={"review_stage": ReviewStage.ACTION_EXECUTION}
+    )
+
+    with pytest.raises(DataConsistencyError, match="command preview"):
+        service.publish(action_set)
 
 
 def test_launchpad_rejects_more_than_three_candidates(tmp_path: Path) -> None:

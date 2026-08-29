@@ -19,6 +19,8 @@ from proposer.models import GeminiChoices
 SYSTEM_INSTRUCTION = """You are the proposal component of a human-gated GCP IAM security
 evaluation. Select only technique IDs from allowed_techniques. Do not invent permissions,
 targets, commands, or identifiers. Rank useful next techniques for the stated objective.
+When environment.review_stage is action_execution, select only the registered action represented
+by the selected technique and summarize the concrete command effect in one or two sentences.
 Return a short decision_summary that explains the ranking factors at a high level; do not reveal
 private chain-of-thought. The deterministic validator, not you, decides feasibility and detection
 coverage. An external operator or deterministic evaluation approval policy, not you, decides

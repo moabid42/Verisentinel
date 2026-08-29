@@ -181,6 +181,10 @@ def test_technique_selection_precedes_approved_action_execution(
     assert action_cycle.review_stage == ReviewStage.ACTION_EXECUTION
     assert action_cycle.status == EngagementStatus.AWAITING_APPROVAL
     assert action_cycle.candidates
+    assert action_cycle.candidates[0].action_command is not None
+    assert action_cycle.candidates[0].action_command.display.startswith(
+        "catalog.technique"
+    )
     assert execution.repository.executions.list_keys() == ()
     assert green.environment.current(engagement.engagement_id).state_version == old_state
     assert (
@@ -201,6 +205,12 @@ def test_technique_selection_precedes_approved_action_execution(
     assert completed.status == EngagementStatus.COMPLETED
     assert completed.review_stage == ReviewStage.ACTION_EXECUTION
     assert not completed.candidates
+    assert completed.execution_observation is not None
+    assert completed.execution_observation.success
+    assert completed.executed_command == action_cycle.candidates[0].action_command
+    assert completed.resulting_state_version == green.environment.current(
+        engagement.engagement_id
+    ).state_version
     assert cycle.candidates[0].proposal.action_id in green.environment.current(
         engagement.engagement_id
     ).completed_actions
@@ -233,6 +243,16 @@ def test_action_rejection_feedback_reguides_the_next_proposal(
     proposer = green.proposer
     assert isinstance(proposer, StaticProposer)
     assert feedback in proposer.requests[-1].previous_rejections[-1]
+    assert proposer.requests[-1].environment_summary["review_stage"] == (
+        ReviewStage.ACTION_EXECUTION.value
+    )
+    assert proposer.requests[-1].environment_summary["allowed_actions"] == (
+        {
+            "action_id": proposal.action_id,
+            "provider_operation": "catalog.technique",
+            "parameter_model": "technique.none.v1",
+        },
+    )
 
 
 def test_stale_operator_decision_executes_nothing(tmp_path: Path) -> None:

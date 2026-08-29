@@ -381,6 +381,7 @@ class CycleResult(ImmutableModel):
     proposal_round: int
     review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION
     candidates: tuple[CandidateCard, ...] = ()
+    executed_command: ActionCommand | None = None
     execution_observation: ExecutionObservation | None = None
     resulting_state_version: str | None = None
     message: str

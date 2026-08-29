@@ -6,6 +6,7 @@ from core.config import Paths
 from core.errors import DataConsistencyError, VersionConflictError
 from core.ids import new_id
 from core.models import (
+    ActionCommand,
     ApprovalRecord,
     CandidateCard,
     CandidateValidationRequest,
@@ -14,6 +15,7 @@ from core.models import (
     DecisionKind,
     Engagement,
     EngagementStatus,
+    ExecutionObservation,
     ExecutionRequest,
     OperatorDecision,
     Proposal,
@@ -425,6 +427,14 @@ class GreenAgent:
                     ),
                     technique_title=technique.title,
                     expected_capabilities=technique.grants,
+                    action_command=self._action_command(
+                        proposal.action_id,
+                        proposal.target,
+                        tuple(
+                            matrix.permissions[index]
+                            for index in technique.required_indices
+                        ),
+                    ),
                 )
             )
             self._trace(
@@ -713,7 +723,13 @@ class GreenAgent:
             engagement.last_error = result.observation.api_response_summary
             self.repository.save(engagement)
             self.execution.authorize(self._authorization(engagement, enabled=False))
-            return self._result(engagement, "Approved action failed; engagement stopped.")
+            return self._result(
+                engagement,
+                "Approved action failed; engagement stopped.",
+                executed_command=candidate.action_command,
+                execution_observation=result.observation,
+                resulting_state_version=updated.state_version,
+            )
 
         engagement.status = EngagementStatus.COMPLETED
         engagement.rejection_feedback = ()
@@ -723,7 +739,32 @@ class GreenAgent:
         return self._result(
             engagement,
             "Approved action command executed; engagement goal stage completed.",
+            executed_command=candidate.action_command,
+            execution_observation=result.observation,
+            resulting_state_version=updated.state_version,
         )
+
+    @staticmethod
+    def _action_command(
+        action_id: str,
+        target: str,
+        required_permissions: tuple[str, ...],
+    ) -> ActionCommand:
+        """Build a factual preview for one registered provider operation."""
+        parts = target.split("/")
+        if (
+            "storage.objects.create" in required_permissions
+            and len(parts) == 4
+            and parts[0] == "projects"
+            and parts[2] == "buckets"
+        ):
+            display = (
+                "storage.objects.create "
+                f"gs://{parts[3]}/actions/<approval_id>.json"
+            )
+        else:
+            display = f"catalog.technique {action_id} --target {target}"
+        return ActionCommand(action_id=action_id, display=display)
 
     @staticmethod
     def _resolve_proposal(
@@ -798,7 +839,14 @@ class GreenAgent:
             raise DataConsistencyError(f"engagement is terminal with status {engagement.status}")
 
     @staticmethod
-    def _result(engagement: Engagement, message: str) -> CycleResult:
+    def _result(
+        engagement: Engagement,
+        message: str,
+        *,
+        executed_command: ActionCommand | None = None,
+        execution_observation: ExecutionObservation | None = None,
+        resulting_state_version: str | None = None,
+    ) -> CycleResult:
         candidates = tuple(
             sorted(engagement.candidates.values(), key=lambda card: card.proposal.rank)
         )
@@ -808,6 +856,9 @@ class GreenAgent:
             proposal_round=engagement.proposal_round,
             review_stage=engagement.review_stage,
             candidates=candidates,
+            executed_command=executed_command,
+            execution_observation=execution_observation,
+            resulting_state_version=resulting_state_version,
             message=message,
         )
 

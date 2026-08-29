@@ -121,7 +121,7 @@ env analyse --rebuild-snapshot
 
 The connection infers its scenario from the infrastructure record and changes
 the prompt to the scenario service-account name. `env analyse` runs the guarded
-proposal, validation, and operator-decision loop described below.
+two-stage technique and command loop described below.
 
 ## Run and approve
 
@@ -135,11 +135,21 @@ Build the scenario's Sigma-only snapshot during the first run:
   --rebuild-snapshot
 ```
 
-Review the candidates. Approve only the card whose technique is
+Review the technique candidates. Select only the card whose technique is
 `unauthenticated-access:gcp-public-buckets-privilege-escalation:6` and whose
-required permission is `storage.objects.create`. Do not approve a different
-candidate merely to advance the run. After the terminal reports successful
-delivery and begins another proposal cycle, enter `q` to terminate cleanly.
+required permission is `storage.objects.create`. Selection does not execute the
+technique. The next screen shows only a command preview in this form and the
+proposer's short reason:
+
+```text
+storage.objects.create \
+  gs://verisentinel-tf-flag-project-551b0c2b-9622-4479-b23/actions/<approval_id>.json
+```
+
+Reject with `r1` to provide feedback and request a revised proposal, or enter
+`1` to approve and execute the displayed registered command. A successful
+execution prints `COMMAND OUTPUT` with the resolved object URI and completes
+the engagement. It does not start another top-level proposal cycle.
 
 ## Retrieve and verify the flag
 

@@ -348,11 +348,14 @@ env analyse --rebuild-snapshot
 
 Inside the persistent development shell, a successful `sandbox connect` enters
 an application prompt scoped to the scenario service account. `env show`
-reports the declared and current Environment Brain state. `env analyse` runs the
-same bounded proposer/validator loop and explicit operator gate as `scenario
-run`, while reconstructing the exact impersonation source from the verified
-connection. Enter `/back` to leave that prompt without disconnecting and
-`/sandbox` to return to it.
+reports the declared and current Environment Brain state. `env analyse` first
+publishes validated techniques for selection without executing them. After a
+technique is selected, it publishes a concise typed command and one- or
+two-sentence reason for a separate execution decision. A rejection requires
+feedback, which is supplied to the next bounded proposal round. An approved
+command prints its bounded provider output and completes the engagement rather
+than automatically restarting technique selection. Enter `/back` to leave the
+prompt without disconnecting and `/sandbox` to return to it.
 
 The development bucket has uniform access, enforced public-access prevention, and a one-day object
 lifecycle. The execution capsule remains on an internal network. A separate fixed gateway container

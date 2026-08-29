@@ -80,12 +80,29 @@ token or claim to enumerate permissions outside the scenario's authorized
 scope.
 
 `env analyse` reconstructs the exact service-account impersonation source in
-development mode and runs the maintained GreenAgent workflow. The proposer may
-suggest options, but the validator filters them and supplies rejection feedback
-for bounded retries. Only admissible candidates reach the terminal. The
-operator must then approve, reject, request alternatives, reject all, or
-terminate; approval is never inferred. An approved option is revalidated before
-the one-time execution authorization is consumed.
+development mode and runs the maintained GreenAgent workflow in two explicit
+stages. First, the proposer ranks techniques and the validator filters them.
+Selecting a technique does not resolve credentials, create an execution
+approval, or invoke the provider. It opens the action stage for that technique.
+
+The action stage displays only the concrete typed command and the proposer's
+one- or two-sentence reason. For the GCS flag scenario, the preview is:
+
+```text
+storage.objects.create gs://BUCKET/actions/<approval_id>.json
+```
+
+`<approval_id>` remains a placeholder because the one-time approval identifier
+is generated only after the operator explicitly chooses execute. Enter `r1`,
+`a`, or `x` to reject a command, request alternatives, or reject all. The shell
+then requires feedback and sends it to the next bounded proposal round. Enter
+`1` to execute the displayed registered operation. Arbitrary shell strings are
+never accepted.
+
+After execution, `COMMAND OUTPUT` reports success or failure, the exact provider
+response, created or discovered resources, execution ID, and resulting
+Environment Brain state. A successful command completes the current engagement
+instead of automatically launching another top-level technique search.
 
 Enter `exit` or `/back` to return to the top-level prompt without disconnecting.
 Use `/sandbox` to re-enter the active connection. Cleanup is explicit:

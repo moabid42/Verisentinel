@@ -16,6 +16,7 @@ from core.ids import new_id
 from core.models import (
     CreateEngagementRequest,
     CycleResult,
+    DecisionKind,
     EngagementStatus,
     MatrixSnapshot,
     OperatorDecision,
@@ -46,7 +47,7 @@ from runner.connection import (
     SandboxConnectionRepository,
 )
 from runner.scenario import PlannerScenario, load_scenario
-from runner.terminal import TerminalUI, parse_choice
+from runner.terminal import TerminalChoice, TerminalUI, parse_choice
 
 CODE_DIRECTORY = Path(__file__).resolve().parents[1]
 
@@ -591,13 +592,36 @@ def _operator_loop(
     terminal: TerminalUI,
 ) -> int:
     while result.status == EngagementStatus.AWAITING_APPROVAL:
-        terminal.candidates(result.candidates)
+        terminal.candidates(
+            result.candidates,
+            review_stage=result.review_stage,
+        )
         while True:
             try:
-                choice = parse_choice(terminal.choice_prompt(), result.candidates)
+                choice = parse_choice(
+                    terminal.choice_prompt(result.review_stage),
+                    result.candidates,
+                )
                 break
             except ValueError as error:
                 terminal.invalid_choice(str(error))
+
+        if choice.decision in {
+            DecisionKind.REJECT,
+            DecisionKind.REJECT_ALL,
+            DecisionKind.REQUEST_ALTERNATIVES,
+        }:
+            feedback = terminal.feedback_prompt()
+            while not feedback:
+                terminal.invalid_choice(
+                    "feedback is required to guide the next proposal"
+                )
+                feedback = terminal.feedback_prompt()
+            choice = TerminalChoice(
+                decision=choice.decision,
+                candidate_id=choice.candidate_id,
+                reason=feedback,
+            )
 
         current = planner.get(result.engagement_id)
         decision = OperatorDecision(
@@ -615,6 +639,7 @@ def _operator_loop(
             decision=choice.decision,
             candidate_id=choice.candidate_id,
             operator=scenario.operator,
+            feedback=choice.reason,
         )
         launchpad.decide(decision)
         result = planner.decide(decision)

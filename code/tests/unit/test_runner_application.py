@@ -9,7 +9,14 @@ import pytest
 
 import runner.application as application_module
 from core.config import Paths
-from core.models import MatrixSnapshot
+from core.models import (
+    CycleResult,
+    DecisionKind,
+    EngagementStatus,
+    MatrixSnapshot,
+    ReviewStage,
+)
+from core.tracing import DebugTrace
 from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
 from execution.credentials import (
@@ -33,6 +40,7 @@ from runner.connection import (
     SandboxConnection,
     SandboxConnectionRepository,
 )
+from runner.terminal import TerminalChoice
 
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
 PRINCIPAL = "runner@authorized-project.iam.gserviceaccount.com"
@@ -246,3 +254,88 @@ def test_connected_analysis_reconstructs_exact_impersonation_source(
     assert requests[0].credential_source.kind == CredentialSourceKind.IMPERSONATE
     assert requests[0].credential_source.locator == connection.principal
     assert requests[0].development_mode
+
+
+def test_operator_rejection_requires_and_forwards_feedback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    submitted = []
+    invalid_messages: list[str] = []
+
+    class Planner:
+        def get(self, engagement_id: str):
+            return SimpleNamespace(
+                engagement_id=engagement_id,
+                state_version="state",
+                matrix_version="matrix",
+            )
+
+        def decide(self, decision):
+            submitted.append(decision)
+            return CycleResult(
+                engagement_id=decision.engagement_id,
+                status=EngagementStatus.TERMINATED,
+                proposal_round=1,
+                review_stage=ReviewStage.ACTION_EXECUTION,
+                message="terminated",
+            )
+
+    class Launchpad:
+        def decide(self, decision):
+            assert decision.reason == "Use the bounded storage operation."
+
+    class Terminal:
+        def __init__(self) -> None:
+            self.feedback = iter(("", "Use the bounded storage operation."))
+
+        def candidates(self, candidates, *, review_stage):
+            assert candidates == ()
+            assert review_stage == ReviewStage.ACTION_EXECUTION
+
+        def choice_prompt(self, review_stage):
+            assert review_stage == ReviewStage.ACTION_EXECUTION
+            return "r1"
+
+        def feedback_prompt(self):
+            return next(self.feedback)
+
+        def invalid_choice(self, message):
+            invalid_messages.append(message)
+
+        def cycle_message(self, message):
+            assert message == "terminated"
+
+        def finished(self, *, failed):
+            assert not failed
+
+    monkeypatch.setattr(
+        application_module,
+        "parse_choice",
+        lambda raw, candidates: TerminalChoice(
+            DecisionKind.REJECT,
+            candidate_id="candidate",
+        ),
+    )
+    initial = CycleResult(
+        engagement_id="engagement",
+        status=EngagementStatus.AWAITING_APPROVAL,
+        proposal_round=1,
+        review_stage=ReviewStage.ACTION_EXECUTION,
+        message="review",
+    )
+
+    result = application_module._operator_loop(
+        Planner(),
+        Launchpad(),
+        SimpleNamespace(operator="operator@example.test"),
+        initial,
+        DebugTrace(tmp_path / "trace.jsonl", "run", echo=False),
+        Terminal(),
+    )
+
+    assert result == 0
+    assert submitted[0].reason == "Use the bounded storage operation."
+    assert invalid_messages == [
+        "feedback is required to guide the next proposal"
+    ]

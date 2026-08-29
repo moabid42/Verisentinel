@@ -13,6 +13,7 @@ from core.models import (
     CandidateValidationResult,
     DecisionKind,
     Proposal,
+    ReviewStage,
 )
 from core.tracing import DebugTrace
 from execution.capsule.doctor import CapsuleCheck, CapsuleDoctorReport
@@ -988,10 +989,28 @@ def test_terminal_review_displays_candidate_evidence() -> None:
     terminal.candidates((displayed,))
 
     rendered = stream.getvalue()
-    assert "APPROVAL REQUIRED" in rendered
+    assert "SELECTION REQUIRED" in rendered
     assert "Test technique" in rendered
     assert "test-capability" in rendered
     assert "covered.permission" in rendered
     assert "test.permission" in rendered
     assert "detection-id" in rendered
     assert "/execute" not in rendered
+
+
+def test_terminal_action_review_distinguishes_execution_approval() -> None:
+    stream = StringIO()
+    terminal = TerminalUI(
+        Console(file=stream, color_system=None, highlight=False, width=100)
+    )
+
+    terminal.candidates(
+        (candidate(),),
+        review_stage=ReviewStage.ACTION_EXECUTION,
+    )
+
+    rendered = stream.getvalue()
+    assert "ACTION COMMAND REVIEW" in rendered
+    assert "EXECUTION APPROVAL REQUIRED" in rendered
+    assert "Typed command" in rendered
+    assert "Execute once after explicit approval" in rendered

@@ -12,7 +12,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
-from core.models import CandidateCard, DecisionKind
+from core.models import CandidateCard, DecisionKind, ReviewStage
 from execution.capsule.doctor import CapsuleDoctorReport
 from execution.capsule.setup import CapsuleBuildReport
 from runner.connection import SandboxConnection
@@ -604,19 +604,43 @@ class TerminalUI:
             state_style="accent",
         )
 
-    def candidates(self, candidates: tuple[CandidateCard, ...]) -> None:
+    def candidates(
+        self,
+        candidates: tuple[CandidateCard, ...],
+        *,
+        review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION,
+    ) -> None:
         """Render admissible candidates and their validation evidence."""
+        action_review = review_stage == ReviewStage.ACTION_EXECUTION
         if not candidates:
             self.console.print(
                 Panel(
-                    "No admissible candidates are available in this cycle.",
-                    title="[accent]REVIEW[/accent]",
+                    (
+                        "No validated action commands are available in this cycle."
+                        if action_review
+                        else "No admissible techniques are available in this cycle."
+                    ),
+                    title=(
+                        "[accent]ACTION COMMAND REVIEW[/accent]"
+                        if action_review
+                        else "[accent]TECHNIQUE REVIEW[/accent]"
+                    ),
                     border_style="yellow",
                 )
             )
             return
-        heading = Text("REVIEW QUEUE", style="accent")
-        heading.append("  VALIDATED · APPROVAL REQUIRED", style="warning")
+        heading = Text(
+            "ACTION COMMAND REVIEW" if action_review else "TECHNIQUE REVIEW",
+            style="accent",
+        )
+        heading.append(
+            (
+                "  VALIDATED · EXECUTION APPROVAL REQUIRED"
+                if action_review
+                else "  VALIDATED · SELECTION REQUIRED"
+            ),
+            style="warning",
+        )
         self.console.print(Padding(heading, (1, 0, 0, 0)))
         for index, card in enumerate(candidates, start=1):
             proposal = card.proposal
@@ -625,7 +649,13 @@ class TerminalUI:
             details.add_column(style="label", no_wrap=True)
             details.add_column()
             details.add_row("Technique", proposal.technique_id)
-            details.add_row("Action", proposal.action_id)
+            if action_review:
+                details.add_row("Typed command", proposal.action_id)
+                details.add_row("Operation", "catalog.technique")
+                details.add_row("Parameters", "none")
+                details.add_row("Effect", "Execute once after explicit approval")
+            else:
+                details.add_row("Effect", "Select technique; do not execute")
             details.add_row("Identity", proposal.identity)
             details.add_row("Target", proposal.target)
             details.add_row("Required", _joined(card.required_permissions))
@@ -649,14 +679,22 @@ class TerminalUI:
                 )
             )
 
-    def choice_prompt(self) -> str:
+    def choice_prompt(
+        self,
+        review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION,
+    ) -> str:
         """Prompt for one decision without introducing an approval default."""
+        verb = "execute" if review_stage == ReviewStage.ACTION_EXECUTION else "select"
         self.console.print(
-            "[accent]1–3[/accent] approve   [accent]r1–r3[/accent] reject   "
+            f"[accent]1–3[/accent] {verb}   [accent]r1–r3[/accent] reject   "
             "[accent]a[/accent] alternatives   [accent]x[/accent] reject all   "
             "[accent]q[/accent] terminate"
         )
         return self.console.input("[accent]Decision › [/accent]")
+
+    def feedback_prompt(self) -> str:
+        """Read required operator feedback for a rejected proposal."""
+        return self.console.input("[accent]Feedback › [/accent]").strip()
 
     def invalid_choice(self, message: str) -> None:
         """Render a recoverable operator input error."""

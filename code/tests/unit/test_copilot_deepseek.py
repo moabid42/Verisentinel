@@ -59,7 +59,7 @@ def harness(tmp_path: Path, **overrides) -> DeepSeekCopilotHarness:
         "installed_version": DEEPSEEK_HARNESS_VERSION,
         "runtime_bin": runtime,
         "cordis_path": cordis,
-        "bubblewrap": "/usr/bin/bwrap",
+        "docker": "/usr/bin/docker",
     }
     settings.update(overrides)
     return DeepSeekCopilotHarness(**settings)
@@ -78,7 +78,9 @@ def test_deepseek_adapter_reuses_one_persistent_session(tmp_path: Path) -> None:
     sdk = adapter._sdk
     assert isinstance(sdk, FakeSdk)
     assert sdk.started
-    assert "synthetic-model-key" not in sdk.kwargs["launch_args_override"]
+    launch = sdk.kwargs["launch_args_override"]
+    assert str((tmp_path / "dsh").resolve()) in launch
+    assert "synthetic-model-key" not in launch
 
 
 def test_deepseek_adapter_rejects_unpinned_sdk(tmp_path: Path) -> None:

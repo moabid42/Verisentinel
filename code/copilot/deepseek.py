@@ -13,6 +13,9 @@ from copilot.protocol import CopilotSession, CopilotTurn
 from core.tracing import DebugTrace
 
 DEEPSEEK_HARNESS_VERSION = "0.1.1rc1"
+DEEPSEEK_RUNTIME_IMAGE = (
+    "ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517"
+)
 _MAX_RESPONSE_CHARACTERS = 16_384
 
 
@@ -76,7 +79,8 @@ class DeepSeekCopilotHarness:
         installed_version: str | None = None,
         runtime_bin: Path | None = None,
         cordis_path: Path | None = None,
-        bubblewrap: str | None = None,
+        docker: str | None = None,
+        image: str = DEEPSEEK_RUNTIME_IMAGE,
     ) -> None:
         self._api_key = api_key
         self._model = model
@@ -89,7 +93,8 @@ class DeepSeekCopilotHarness:
         self._installed_version = installed_version
         self._runtime_bin = runtime_bin
         self._cordis_path = cordis_path
-        self._bubblewrap = bubblewrap
+        self._docker = docker
+        self._image = image
         self._sdk: Any | None = None
         self._sessions: dict[str, _DeepSeekSession] = {}
 
@@ -107,13 +112,13 @@ class DeepSeekCopilotHarness:
                 "DeepSeek Harness SDK version mismatch: expected "
                 f"{DEEPSEEK_HARNESS_VERSION}, found {version}"
             )
-        bubblewrap = self._bubblewrap or shutil.which("bwrap")
-        if bubblewrap is None:
-            raise DeepSeekHarnessUnavailable("bubblewrap is required for copilot isolation")
+        docker = self._docker or shutil.which("docker")
+        if docker is None:
+            raise DeepSeekHarnessUnavailable("Docker is required for copilot isolation")
         self.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.session_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self._sdk is None:
-            self._sdk = self._build_sdk(bubblewrap)
+            self._sdk = self._build_sdk(docker)
         try:
             self._sdk.start()
         except Exception as error:
@@ -145,7 +150,7 @@ class DeepSeekCopilotHarness:
         self._sdk = None
         self._sessions = {}
 
-    def _build_sdk(self, bubblewrap: str) -> Any:
+    def _build_sdk(self, docker: str) -> Any:
         factory = self._sdk_factory
         runtime_bin = self._runtime_bin
         cordis_path = self._cordis_path
@@ -183,8 +188,10 @@ class DeepSeekCopilotHarness:
             launch_args_override=(
                 sys.executable,
                 str(launcher),
-                "--bubblewrap",
-                bubblewrap,
+                "--docker",
+                docker,
+                "--image",
+                self._image,
                 "--runtime",
                 str(runtime_bin.resolve()),
                 "--cordis",

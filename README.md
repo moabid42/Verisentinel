@@ -140,7 +140,7 @@ All commands run from the `code/` directory.
 cd code
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -e '.[dev,copilot]'
 ```
 
 **2. Build a coverage-matrix snapshot** from every available detection source:
@@ -177,7 +177,11 @@ scenario state and `env analyse` runs the validated, human-gated loop. Use
 `sandbox disconnect` and `infra destroy INFRA_ID` for Terraform-backed cleanup.
 
 Gemini ranks cataloged techniques, the validator filters them, and the terminal launchpad shows up
-to three admissible candidates. Approving one triggers fresh validation, a one-time approval record,
+to three admissible candidates. When `copilot.enabled` is true, the selected technique enters a
+persistent DeepSeek Harness coding session. The session authors `action.py`; a Docker-isolated fake
+gateway rejects malformed envelopes and feeds the bounded failure back to the same session until
+preflight passes. Only then is the complete file shown for approval. Approving it triggers fresh
+validation and a one-time approval record,
 a single guarded capsule delivery, and a new environment-state version. Scripts can use the direct
 `verisentinel scenario run ...` command without opening the shell.
 

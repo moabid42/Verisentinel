@@ -682,7 +682,11 @@ class TerminalUI:
                         )
                         details.add_row(
                             "Current state",
-                            "Proposed in memory; not written and not executed",
+                            (
+                                "Authored and contract-tested in an isolated "
+                                "harness workspace; not promoted to the execution "
+                                "workspace and not executed"
+                            ),
                         )
                         details.add_row(
                             "SHA-256",
@@ -698,11 +702,7 @@ class TerminalUI:
                         details.add_row("Tool origin", command.tool_installation)
                         details.add_row(
                             "Source",
-                            (
-                                artifact.workspace_path
-                                if artifact is not None
-                                else "unavailable"
-                            ),
+                            (artifact.workspace_path if artifact is not None else "unavailable"),
                         )
                         details.add_row(
                             "Current state",
@@ -870,10 +870,12 @@ class TerminalUI:
         """Render the bounded output returned by one approved command."""
         stdout = observation.command_stdout or "(no stdout)"
         explanation = observation.explanation or observation.api_response_summary
-        next_steps = "\n".join(
-            f"{index}. {step}"
-            for index, step in enumerate(observation.next_steps, start=1)
-        ) or "None suggested."
+        next_steps = (
+            "\n".join(
+                f"{index}. {step}" for index, step in enumerate(observation.next_steps, start=1)
+            )
+            or "None suggested."
+        )
         self._key_values(
             "COMMAND OUTPUT",
             (
@@ -946,11 +948,7 @@ def parse_choice(raw: str, candidates: tuple[CandidateCard, ...]) -> TerminalCho
         raise ValueError("message requires text")
     if value.startswith("message "):
         question = stripped[len("message ") :].strip()
-        if (
-            len(question) >= 2
-            and question[0] == question[-1]
-            and question[0] in {'"', "'"}
-        ):
+        if len(question) >= 2 and question[0] == question[-1] and question[0] in {'"', "'"}:
             question = question[1:-1].strip()
         if not question:
             raise ValueError("message requires text")

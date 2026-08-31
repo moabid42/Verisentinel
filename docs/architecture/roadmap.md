@@ -215,6 +215,12 @@ runtime output, when those measurements inform the managed-runtime decision.
 
 ## Milestone 4: Optional DeepSeek Copilot Prototype
 
+An experimental first slice is implemented for post-technique action authoring: the repository
+protocol owns persistent sessions, `deepseek-harness-sdk==0.1.1rc1` is pinned, the runtime is
+container-isolated, and action files must pass deterministic isolated preflight before review.
+Execution failures return to the same session with fresh approval boundaries. Read-only IAMouflage
+MCP integration and the remaining acceptance items below are still pending.
+
 Define `CopilotHarness` with a deterministic fake before adding an external SDK.
 Then implement an optional DeepSeek adapter and connect IAMouflage through its
 existing read-only MCP server. Do not edit the IAMouflage submodule or expose

@@ -95,6 +95,7 @@ def test_scenario_loads_opaque_credential_reference(tmp_path: Path) -> None:
         "credential_ref": "run/default",
         "permissions": ["storage.objects.get"],
     }
+    assert scenario.copilot.enabled is False
     assert scenario.copilot.api_key_env == "GEMINI_API_KEY"
 
 
@@ -104,6 +105,7 @@ def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
     path.write_text(
         path.read_text(encoding="utf-8")
         + """copilot:
+  enabled: true
   model: deepseek-v4-flash
   api_key_env: DEEPSEEK_API_KEY
   base_url: https://api.deepseek.com
@@ -115,6 +117,7 @@ def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
     scenario = load_scenario(path)
 
     assert scenario.copilot.model == "deepseek-v4-flash"
+    assert scenario.copilot.enabled is True
     assert scenario.copilot.base_url == "https://api.deepseek.com/"
     assert scenario.copilot.maximum_repairs == 4
 
@@ -1115,7 +1118,8 @@ def test_terminal_file_review_shows_complete_unwritten_source() -> None:
     rendered = stream.getvalue()
     assert "FILE CHANGE REVIEW" in rendered
     assert "FILE-WRITE APPROVAL REQUIRED" in rendered
-    assert "Proposed in memory; not written and not executed" in rendered
+    assert "Authored and contract-tested in an isolated harness" in rendered
+    assert "not executed" in rendered
     assert "gemini-fixture" in rendered
     assert "complete model-authored file" in rendered
 

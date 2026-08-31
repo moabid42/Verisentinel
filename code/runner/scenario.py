@@ -146,6 +146,7 @@ class CompletionSettings(ImmutableModel):
 class CopilotSettings(ImmutableModel):
     """Pinned coding-harness route used after technique selection."""
 
+    enabled: bool = False
     model: str | None = Field(default=None, min_length=1, max_length=128)
     api_key_env: str = "GEMINI_API_KEY"
     base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"

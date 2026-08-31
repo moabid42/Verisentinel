@@ -38,6 +38,7 @@ model:
   heartbeat_seconds: 5
 
 copilot:
+  enabled: true
   model: gemini-3.6-flash
   api_key_env: GEMINI_API_KEY
   base_url: https://generativelanguage.googleapis.com/v1beta/openai/

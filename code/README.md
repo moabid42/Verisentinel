@@ -162,7 +162,7 @@ Run these commands from this `code` directory:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -e '.[dev,copilot]'
 ```
 
 The project uses editable installation so changes to local Python files take effect immediately.
@@ -422,20 +422,28 @@ three admissible candidates. The terminal launchpad accepts only explicit input:
 r1-r3     reject that displayed candidate
 s1-s3     display the complete model-authored action source
 i1-i3     display the exact non-secret input for a pending command
-text      ask or instruct Gemini without authorizing execution
+  message   ask the persistent action session without authorizing execution
 a         request alternatives
 x         reject all
 q         terminate without execution
 ```
 
-Technique selection does not authorize a write or execution. Gemini next proposes one complete
-`action.py` file in memory. The file review shows its entire content and digest; approving it writes
-that exact file under `runtime/action-agent/` but runs nothing. A separate command review then shows
+Technique selection does not authorize a write or execution. With `copilot.enabled: true`, a pinned
+DeepSeek Harness session next authors one complete `action.py` in an isolated generated workspace.
+The harness runs a Docker-isolated contract test against a fake private gateway and reprompts the
+same session with bounded failures until the exact typed envelope succeeds. The file review then
+shows the entire tested content and digest; approving it promotes that exact file under
+`runtime/action-agent/` but runs nothing. A separate command review then shows
 `/usr/local/bin/python /workspace/action.py`, the exact input, and expected remote side effects.
 Command approval triggers fresh validation, binds the file digest into a one-time approval, mounts
 the file read-only in the restricted capsule, executes it without a shell, validates the result,
 and records a new environment-state version. Rejecting or terminating never calls the provider.
 Empty or malformed input never defaults to approval.
+
+If approved execution fails, its one-time approval remains consumed. The Green Agent does not rerun
+it automatically: it sends the bounded diagnostic back to the same harness session, requires a new
+preflight-valid file review, and then requires a separate fresh command approval. The terminal warns
+that the previous remote outcome may be uncertain.
 
 The gateway image contains only harness infrastructure; it no longer bundles a solution-specific
 `gcs_upload.py`. The reviewed model-authored file performs the action through the fixed private

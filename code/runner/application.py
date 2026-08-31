@@ -11,6 +11,7 @@ from typing import Protocol
 from dotenv import load_dotenv
 
 from action_agent.harness import HarnessActionAgent
+from action_agent.service import ActionAgentService
 from copilot.deepseek import DeepSeekCopilotHarness
 from core.config import Paths
 from core.errors import NotFoundError
@@ -302,8 +303,10 @@ def run_planner(request: PlannerRunRequest) -> int:
         raise PlannerConfigurationError(
             "GEMINI_API_KEY is empty; add it to code/.env before running"
         )
-    copilot_api_key = os.getenv(scenario.copilot.api_key_env, "").strip()
-    if not copilot_api_key:
+    copilot_api_key = (
+        os.getenv(scenario.copilot.api_key_env, "").strip() if scenario.copilot.enabled else ""
+    )
+    if scenario.copilot.enabled and not copilot_api_key:
         raise PlannerConfigurationError(
             f"{scenario.copilot.api_key_env} is empty; configure the DeepSeek "
             "Harness model credential before running"
@@ -322,14 +325,14 @@ def run_planner(request: PlannerRunRequest) -> int:
     trace = DebugTrace(
         trace_path,
         run_id,
-        secrets=(api_key, copilot_api_key),
+        secrets=tuple(secret for secret in (api_key, copilot_api_key) if secret),
         echo=not request.quiet_trace,
         progress_path=progress_path,
     )
     conversation_trace = DebugTrace(
         conversation_path,
         run_id,
-        secrets=(api_key, copilot_api_key),
+        secrets=tuple(secret for secret in (api_key, copilot_api_key) if secret),
         echo=False,
     )
     conversation_trace.emit(
@@ -389,23 +392,26 @@ def run_planner(request: PlannerRunRequest) -> int:
             provider="capsule",
             enabled=True,
         )
-        copilot_root = paths.runtime / "copilot" / run_id
-        copilot_harness = DeepSeekCopilotHarness(
-            api_key=copilot_api_key,
-            model=(scenario.copilot.model or scenario.model.name or "gemini-3.6-flash"),
-            workspace_root=copilot_root / "workspace",
-            session_root=copilot_root / "sessions",
-            base_url=scenario.copilot.base_url,
-            timeout_seconds=scenario.copilot.timeout_seconds,
-            trace=trace,
-        )
-        copilot_harness.require_ready()
-        action_assistant = HarnessActionAgent(
-            copilot_harness,
-            copilot_root / "workspace",
-            maximum_repairs=scenario.copilot.maximum_repairs,
-            trace=trace,
-        )
+        if scenario.copilot.enabled:
+            copilot_root = paths.runtime / "copilot" / run_id
+            copilot_harness = DeepSeekCopilotHarness(
+                api_key=copilot_api_key,
+                model=(scenario.copilot.model or scenario.model.name or "gemini-3.6-flash"),
+                workspace_root=copilot_root / "workspace",
+                session_root=copilot_root / "sessions",
+                base_url=scenario.copilot.base_url,
+                timeout_seconds=scenario.copilot.timeout_seconds,
+                trace=trace,
+            )
+            copilot_harness.require_ready()
+            action_assistant = HarnessActionAgent(
+                copilot_harness,
+                copilot_root / "workspace",
+                maximum_repairs=scenario.copilot.maximum_repairs,
+                trace=trace,
+            )
+        else:
+            action_assistant = ActionAgentService(gemini)
         planner = GreenAgent(
             snapshots=snapshots,
             proposer=proposer,

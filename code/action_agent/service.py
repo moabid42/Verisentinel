@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 from typing import Any, Protocol
@@ -10,6 +9,7 @@ from typing import Any, Protocol
 from google.genai import types
 
 from action_agent.models import AuthoredAction
+from action_agent.preflight import validate_source
 from core.models import (
     ActionArtifact,
     ActionAuthorRequest,
@@ -35,14 +35,6 @@ gateway's JSON response to stdout. Use only json, pathlib, sys, urllib.error, an
 from the standard library. Do not invoke a shell, subprocess, dynamic code, or any other endpoint.
 Return the entire file through the response schema. The harness, not you, assigns identifiers,
 validates and writes the file, approves the command, or executes it."""
-
-_ALLOWED_IMPORTS = {"json", "pathlib", "sys", "urllib.error", "urllib.request"}
-_REQUIRED_SOURCE_VALUES = {
-    "/run/verisentinel/spec.json",
-    "/run/verisentinel/credential",
-    "http://verisentinel-mock:8080/execute",
-}
-_DENIED_CALLS = {"__import__", "compile", "eval", "exec"}
 
 
 class GeminiGateway(Protocol):
@@ -103,28 +95,22 @@ class ActionAgentService:
                 response_mime_type="application/json",
                 response_json_schema=AuthoredAction.model_json_schema(),
                 max_output_tokens=8192,
-                http_options=types.HttpOptions(
-                    timeout=int(self.gemini.timeout_seconds * 1000)
-                ),
+                http_options=types.HttpOptions(timeout=int(self.gemini.timeout_seconds * 1000)),
             ),
         )
-        response_text = getattr(response, "text", None) or self.gemini._response_text(
-            response
-        )
+        response_text = getattr(response, "text", None) or self.gemini._response_text(response)
         if not response_text:
             raise RuntimeError("Gemini returned an empty authored action")
         authored = AuthoredAction.model_validate_json(response_text)
-        _validate_source(authored.file_path, authored.file_content)
-        digest = "sha256:" + hashlib.sha256(
-            authored.file_content.encode("utf-8")
-        ).hexdigest()
+        validate_source(authored.file_path, authored.file_content)
+        digest = "sha256:" + hashlib.sha256(authored.file_content.encode("utf-8")).hexdigest()
         artifact = ActionArtifact(
             content=authored.file_content,
             digest=digest,
             source_model=model,
             rationale=authored.explanation,
         )
-        command = _command(request, artifact)
+        command = build_action_command(request, artifact)
         self.gemini._emit(
             "action_authoring_completed",
             summary=(
@@ -178,15 +164,10 @@ class ActionAgentService:
                     include_thoughts=False,
                 ),
                 max_output_tokens=4096,
-                http_options=types.HttpOptions(
-                    timeout=int(self.gemini.timeout_seconds * 1000)
-                ),
+                http_options=types.HttpOptions(timeout=int(self.gemini.timeout_seconds * 1000)),
             ),
         )
-        answer = (
-            getattr(response, "text", None)
-            or self.gemini._response_text(response)
-        ).strip()
+        answer = (getattr(response, "text", None) or self.gemini._response_text(response)).strip()
         if not answer:
             raise RuntimeError("Gemini returned an empty action explanation")
         answer = answer[:4096]
@@ -209,46 +190,13 @@ class ActionAgentService:
         return answer
 
 
-def _validate_source(path: str, content: str) -> None:
-    """Reject source outside the narrow capsule action contract."""
-    if path != "action.py":
-        raise ValueError("the model must propose exactly action.py")
-    try:
-        tree = ast.parse(content, filename=path)
-        compile(tree, path, "exec")
-    except (SyntaxError, ValueError):
-        raise ValueError("the proposed action.py is not valid Python") from None
-    imports: set[str] = set()
-    calls: set[str] = set()
-    literals: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imports.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            imports.add(node.module or "")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            calls.add(node.func.id)
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            literals.add(node.value)
-    if imports - _ALLOWED_IMPORTS:
-        raise ValueError("the proposed action.py imports an unsupported module")
-    if calls.intersection(_DENIED_CALLS):
-        raise ValueError("the proposed action.py uses dynamic code execution")
-    if not _REQUIRED_SOURCE_VALUES.issubset(literals):
-        raise ValueError("the proposed action.py does not implement the capsule contract")
-
-
-def _command(
+def build_action_command(
     request: ActionAuthorRequest,
     artifact: ActionArtifact,
 ) -> ActionCommand:
     """Bind model source to the one registered typed operation."""
     parts = request.target.split("/")
-    if (
-        len(parts) != 4
-        or parts[0] != "projects"
-        or parts[2] != "buckets"
-    ):
+    if len(parts) != 4 or parts[0] != "projects" or parts[2] != "buckets":
         raise ValueError("the selected action target is not a supported bucket")
     object_name = f"actions/{request.approval_id}.json"
     input_preview = json.dumps(

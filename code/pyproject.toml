@@ -27,6 +27,7 @@ verisentinel = "runner.cli:main"
 [project.optional-dependencies]
 copilot = [
   "deepseek-harness-sdk==0.1.1rc1",
+  "websockets>=15,<17",
 ]
 dev = [
   "pytest>=8.4,<10",

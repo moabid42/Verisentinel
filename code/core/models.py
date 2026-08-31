@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -212,6 +213,41 @@ class ProposalBatch(ImmutableModel):
     model: str
 
 
+class ActionArtifact(ImmutableModel):
+    """One complete model-authored file proposed for controlled execution."""
+
+    path: Literal["action.py"] = "action.py"
+    content: str = Field(min_length=1, max_length=65_536)
+    digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    source_model: str = Field(min_length=1, max_length=128)
+    rationale: str = Field(min_length=1, max_length=2048)
+    written: bool = False
+
+    @model_validator(mode="after")
+    def digest_matches_content(self) -> ActionArtifact:
+        expected = "sha256:" + hashlib.sha256(self.content.encode("utf-8")).hexdigest()
+        if self.digest != expected:
+            raise ValueError("artifact digest does not match its content")
+        return self
+
+
+class ActionAuthorRequest(ImmutableModel):
+    """Bounded context from which a model may author one action artifact."""
+
+    engagement_id: str
+    approval_id: str = Field(pattern=r"^approval_[0-9a-f]{32}$")
+    action_id: str = Field(pattern=r"^technique:\S+$")
+    technique_id: str
+    technique_title: str
+    objective: str
+    identity: str
+    target: str
+    rationale: str
+    required_permissions: tuple[str, ...]
+    observed_permissions: tuple[str, ...]
+    expected_capabilities: tuple[str, ...]
+
+
 class ActionCommand(ImmutableModel):
     """Exact command preview for one registered typed action."""
 
@@ -223,7 +259,7 @@ class ActionCommand(ImmutableModel):
     display: str = Field(min_length=1, max_length=4096)
     provider_operation: Literal["catalog.technique"] = "catalog.technique"
     parameter_model: Literal["technique.none.v1"] = "technique.none.v1"
-    prepared_by: Literal["deterministic_action_resolver"] = (
+    prepared_by: Literal["deterministic_action_resolver", "model"] = (
         "deterministic_action_resolver"
     )
     input_summary: str = Field(
@@ -235,6 +271,7 @@ class ActionCommand(ImmutableModel):
     tool_source: str = Field(default="", max_length=256)
     tool_installation: str = Field(default="", max_length=512)
     side_effects: tuple[str, ...] = ()
+    artifact: ActionArtifact | None = None
 
 
 class CandidateCard(ImmutableModel):

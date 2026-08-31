@@ -36,3 +36,6 @@ model:
   timeout_seconds: 45
   maximum_attempts: 2
   heartbeat_seconds: 5
+
+completion:
+  flag_template: "FLAG{gcs-action-delivery:{approval_id}}"

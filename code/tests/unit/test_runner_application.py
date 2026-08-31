@@ -10,10 +10,15 @@ import pytest
 import runner.application as application_module
 from core.config import Paths
 from core.models import (
+    ActionCommand,
+    CandidateCard,
+    CandidateValidationResult,
     CycleResult,
     DecisionKind,
     EngagementStatus,
+    ExecutionObservation,
     MatrixSnapshot,
+    Proposal,
     ReviewStage,
 )
 from core.tracing import DebugTrace
@@ -328,6 +333,7 @@ def test_operator_rejection_requires_and_forwards_feedback(
     result = application_module._operator_loop(
         Planner(),
         Launchpad(),
+        SimpleNamespace(answer=lambda card, question: "unused"),
         SimpleNamespace(operator="operator@example.test"),
         initial,
         DebugTrace(tmp_path / "trace.jsonl", "run", echo=False),
@@ -339,3 +345,185 @@ def test_operator_rejection_requires_and_forwards_feedback(
     assert invalid_messages == [
         "feedback is required to guide the next proposal"
     ]
+
+
+def test_registered_tool_source_returns_repository_file_and_digest() -> None:
+    content, digest = application_module._registered_tool_source(
+        "execution/gateway/gcs_upload.py"
+    )
+
+    assert content.startswith('"""Fixed command for uploading')
+    assert len(digest) == 64
+
+
+def test_registered_tool_source_rejects_unregistered_path() -> None:
+    with pytest.raises(
+        application_module.PlannerConfigurationError,
+        match="no inspectable tool source",
+    ):
+        application_module._registered_tool_source("/etc/passwd")
+
+
+def test_completion_evidence_requires_matching_created_resource() -> None:
+    approval_id = "approval_" + "1" * 32
+    resource = f"gs://scenario-target/actions/{approval_id}.json"
+    command = ActionCommand(
+        action_id="technique:test",
+        approval_id=approval_id,
+        display="registered-command",
+        side_effects=(f"Create {resource}",),
+    )
+    observation = ExecutionObservation(
+        execution_id="execution",
+        engagement_id="engagement",
+        action_id="technique:test",
+        identity="identity",
+        target="target",
+        success=True,
+        api_response_summary="created object",
+        discovered_resources=(resource,),
+    )
+    result = CycleResult(
+        engagement_id="engagement",
+        status=EngagementStatus.COMPLETED,
+        proposal_round=1,
+        executed_command=command,
+        execution_observation=observation,
+        message="complete",
+    )
+    scenario = SimpleNamespace(
+        completion=SimpleNamespace(
+            flag_template="FLAG{scenario:{approval_id}}",
+        )
+    )
+
+    assert application_module._completion_evidence(scenario, result) == (
+        f"FLAG{{scenario:{approval_id}}}"
+    )
+
+
+def test_operator_action_session_inspects_and_asks_before_deciding(
+    tmp_path: Path,
+) -> None:
+    command = ActionCommand(
+        action_id="technique:test",
+        approval_id="approval_" + "1" * 32,
+        display="registered-command",
+        input_preview='{"operation":"catalog.technique"}',
+        tool_source="execution/gateway/gcs_upload.py",
+        tool_installation="Copied during sandbox build.",
+    )
+    card = CandidateCard(
+        proposal=Proposal(
+            candidate_id="candidate",
+            technique_id="test",
+            action_id="technique:test",
+            identity="identity",
+            target="target",
+            rationale="reason",
+            rank=1,
+        ),
+        validation=CandidateValidationResult(
+            result_id="validation",
+            candidate_id="candidate",
+            technique_id="test",
+            admissible=True,
+            feasible=True,
+            outside_loaded_coverage=True,
+            missing_permissions=(),
+            covered_permissions=(),
+            matching_detection_ids=(),
+            state_version="state",
+            matrix_version="matrix",
+            explanation="admissible",
+        ),
+        required_permissions=(),
+        action_command=command,
+    )
+    initial = CycleResult(
+        engagement_id="engagement",
+        status=EngagementStatus.AWAITING_APPROVAL,
+        proposal_round=1,
+        review_stage=ReviewStage.ACTION_EXECUTION,
+        candidates=(card,),
+        message="review",
+    )
+    submitted = []
+
+    class Planner:
+        def get(self, engagement_id: str):
+            return SimpleNamespace(
+                engagement_id=engagement_id,
+                state_version="state",
+                matrix_version="matrix",
+            )
+
+        def decide(self, decision):
+            submitted.append(decision)
+            return CycleResult(
+                engagement_id=decision.engagement_id,
+                status=EngagementStatus.TERMINATED,
+                proposal_round=1,
+                review_stage=ReviewStage.ACTION_EXECUTION,
+                message="terminated",
+            )
+
+    class Launchpad:
+        def decide(self, decision):
+            assert decision.decision == DecisionKind.TERMINATE
+
+    class Terminal:
+        def __init__(self) -> None:
+            self.inputs = iter(("s1", "i1", "Where did it come from?", "q"))
+            self.source = ""
+            self.input_preview = ""
+            self.answer = ""
+
+        def candidates(self, candidates, *, review_stage):
+            assert candidates == (card,)
+            assert review_stage == ReviewStage.ACTION_EXECUTION
+
+        def choice_prompt(self, review_stage):
+            assert review_stage == ReviewStage.ACTION_EXECUTION
+            return next(self.inputs)
+
+        def command_source(self, *, content, **kwargs):
+            del kwargs
+            self.source = content
+
+        def command_input(self, preview):
+            self.input_preview = preview
+
+        def agent_message(self, message):
+            self.answer = message
+
+        def invalid_choice(self, message):
+            raise AssertionError(message)
+
+        def cycle_message(self, message):
+            assert message == "terminated"
+
+        def finished(self, *, failed):
+            assert not failed
+
+    terminal = Terminal()
+    result = application_module._operator_loop(
+        Planner(),
+        Launchpad(),
+        SimpleNamespace(
+            answer=lambda card, question: (
+                "The tool was copied during sandbox build."
+            )
+        ),
+        SimpleNamespace(operator="operator@example.test"),
+        initial,
+        DebugTrace(tmp_path / "trace.jsonl", "run", echo=False),
+        terminal,
+    )
+
+    assert result == 0
+    assert terminal.source.startswith('"""Fixed command for uploading')
+    assert terminal.input_preview == command.input_preview
+    assert terminal.answer == "The tool was copied during sandbox build."
+    assert len(submitted) == 1
+    assert submitted[0].decision == DecisionKind.TERMINATE

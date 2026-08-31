@@ -33,6 +33,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
+  "action_agent",
   "core",
   "ingestion",
   "environment",

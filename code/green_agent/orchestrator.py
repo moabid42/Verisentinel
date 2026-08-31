@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 from threading import RLock
 
@@ -429,12 +430,19 @@ class GreenAgent:
                     technique_title=technique.title,
                     expected_capabilities=technique.grants,
                     action_command=self._action_command(
-                        proposal.action_id,
-                        proposal.target,
-                        tuple(
+                        engagement_id=engagement.engagement_id,
+                        action_id=proposal.action_id,
+                        identity=proposal.identity,
+                        target=proposal.target,
+                        required_permissions=tuple(
                             matrix.permissions[index]
                             for index in technique.required_indices
                         ),
+                        observed_permissions=tuple(
+                            matrix.permissions[index]
+                            for index in technique.footprint_indices
+                        ),
+                        expected_capabilities=technique.grants,
                     ),
                 )
             )
@@ -457,6 +465,10 @@ class GreenAgent:
         self._publish(engagement, tuple(accepted))
         self._trace(
             "action_candidates_published",
+            summary=(
+                f"Prepared {len(accepted)} command preview(s); no command has "
+                "run and no listed side effect has occurred."
+            ),
             engagement_id=engagement.engagement_id,
             candidate_ids=[card.proposal.candidate_id for card in accepted],
             candidate_count=len(accepted),
@@ -596,6 +608,10 @@ class GreenAgent:
         self.repository.save(engagement)
         self._trace(
             "technique_selected",
+            summary=(
+                f"Selected technique {candidate.proposal.technique_id}; no action "
+                "was executed."
+            ),
             engagement_id=engagement.engagement_id,
             candidate_id=candidate.proposal.candidate_id,
             technique_id=candidate.proposal.technique_id,
@@ -756,9 +772,14 @@ class GreenAgent:
 
     @staticmethod
     def _action_command(
+        *,
+        engagement_id: str,
         action_id: str,
+        identity: str,
         target: str,
         required_permissions: tuple[str, ...],
+        observed_permissions: tuple[str, ...],
+        expected_capabilities: tuple[str, ...],
     ) -> ActionCommand:
         """Build a factual preview for one registered provider operation."""
         approval_id = new_id("approval")
@@ -769,6 +790,7 @@ class GreenAgent:
             and parts[0] == "projects"
             and parts[2] == "buckets"
         ):
+            object_name = f"actions/{approval_id}.json"
             display = shlex.join(
                 (
                     "/usr/local/bin/python",
@@ -776,15 +798,52 @@ class GreenAgent:
                     "--bucket",
                     parts[3],
                     "--object",
-                    f"actions/{approval_id}.json",
+                    object_name,
                 )
+            )
+            input_summary = (
+                "The approval envelope will be assembled in memory after approval "
+                "and passed on stdin; no local payload file exists."
+            )
+            side_effects = (f"Create gs://{parts[3]}/{object_name}",)
+            tool_source = "execution/gateway/gcs_upload.py"
+            tool_installation = (
+                "Bundled during `sandbox build` by execution/gateway/Dockerfile "
+                "and copied to /opt/verisentinel/gcs_upload.py in the immutable "
+                "gateway image; it was not created by the model or this run."
             )
         else:
             display = f"catalog.technique {action_id} --target {target}"
+            input_summary = (
+                "Typed action parameters will be assembled in memory after approval."
+            )
+            side_effects = (f"Invoke {action_id} against {target}",)
+            tool_source = ""
+            tool_installation = "Registered catalog operation; no generated file."
+        input_preview = json.dumps(
+            {
+                "action_id": action_id,
+                "approval_id": approval_id,
+                "engagement_id": engagement_id,
+                "expected_capabilities": list(expected_capabilities),
+                "identity": identity,
+                "observed_permission_footprint": list(observed_permissions),
+                "operation": "catalog.technique",
+                "parameters": {},
+                "target": target,
+            },
+            indent=2,
+            sort_keys=True,
+        )
         return ActionCommand(
             action_id=action_id,
             approval_id=approval_id,
             display=display,
+            input_summary=input_summary,
+            input_preview=input_preview,
+            tool_source=tool_source,
+            tool_installation=tool_installation,
+            side_effects=side_effects,
         )
 
     @staticmethod

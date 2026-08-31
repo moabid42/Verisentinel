@@ -51,6 +51,9 @@ def test_tracked_flag_scenario_matches_supported_storage_action() -> None:
         "storage.objects.create",
     )
     assert scenario.detections.sources == ("sigma",)
+    assert scenario.completion.flag_template == (
+        "FLAG{gcs-action-delivery:{approval_id}}"
+    )
 
 
 def test_flag_scenario_terraform_owns_identity_and_bucket_access() -> None:

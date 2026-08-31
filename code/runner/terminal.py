@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from rich.console import Console, Group
 from rich.padding import Padding
 from rich.panel import Panel
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
@@ -44,9 +45,11 @@ _THEME = Theme(
 class TerminalChoice:
     """One explicit operator decision captured by the terminal."""
 
-    decision: DecisionKind
+    decision: DecisionKind | None = None
     candidate_id: str | None = None
     reason: str = ""
+    inspection: Literal["source", "input"] | None = None
+    question: str = ""
 
 
 class TerminalUI:
@@ -660,6 +663,30 @@ class TerminalUI:
                     "Command",
                     command.display if command is not None else "unavailable",
                 )
+                if command is not None:
+                    details.add_row(
+                        "Prepared by",
+                        "Deterministic action resolver (not the model)",
+                    )
+                    details.add_row(
+                        "Tool origin",
+                        command.tool_installation or "No source file is registered.",
+                    )
+                    if command.tool_source:
+                        details.add_row("Source", command.tool_source)
+                    details.add_row("Current state", "Not run; no side effect occurred")
+                    details.add_row("Input", command.input_summary)
+                    details.add_row(
+                        "Will change",
+                        _joined(command.side_effects),
+                    )
+                    details.add_row(
+                        "After approval",
+                        (
+                            "Revalidate → record one-time approval → assemble input "
+                            "→ run in the controlled gateway → validate output"
+                        ),
+                    )
                 details.add_row("Reason", proposal.rationale)
             else:
                 details.add_row("Technique", proposal.technique_id)
@@ -696,13 +723,76 @@ class TerminalUI:
         review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION,
     ) -> str:
         """Prompt for one decision without introducing an approval default."""
-        verb = "execute" if review_stage == ReviewStage.ACTION_EXECUTION else "select"
+        verb = (
+            "approve & run"
+            if review_stage == ReviewStage.ACTION_EXECUTION
+            else "select"
+        )
         self.console.print(
             f"[accent]1–3[/accent] {verb}   [accent]r1–r3[/accent] reject   "
             "[accent]a[/accent] alternatives   [accent]x[/accent] reject all   "
             "[accent]q[/accent] terminate"
         )
+        if review_stage == ReviewStage.ACTION_EXECUTION:
+            self.console.print(
+                "[accent]s1[/accent] view tool source   "
+                "[accent]i1[/accent] view exact input   "
+                "[accent]message[/accent] ask or instruct the model"
+            )
         return self.console.input("[accent]Decision › [/accent]")
+
+    def command_source(
+        self,
+        *,
+        reference: str,
+        installation: str,
+        digest: str,
+        content: str,
+    ) -> None:
+        """Render the complete source for one registered executable tool."""
+        details = Table.grid(padding=(0, 2))
+        details.add_column(style="label", no_wrap=True)
+        details.add_column(overflow="fold")
+        details.add_row("Repository", reference)
+        details.add_row("Installed by", installation)
+        details.add_row("SHA-256", digest)
+        self.console.print(
+            Panel(
+                Group(
+                    details,
+                    Text(""),
+                    Syntax(content, "python", line_numbers=True, word_wrap=True),
+                ),
+                title="[accent]REGISTERED TOOL SOURCE[/accent]",
+                title_align="left",
+                border_style="cyan",
+                padding=(1, 1),
+            )
+        )
+
+    def command_input(self, preview: str) -> None:
+        """Render the exact non-secret input document for a pending command."""
+        self.console.print(
+            Panel(
+                Syntax(preview, "json", line_numbers=True, word_wrap=True),
+                title="[accent]PENDING COMMAND INPUT[/accent]",
+                subtitle="Credential material is injected only after approval and is not shown.",
+                border_style="cyan",
+                padding=(1, 1),
+            )
+        )
+
+    def agent_message(self, message: str) -> None:
+        """Render one non-executing model response in the action session."""
+        self.console.print(
+            Panel(
+                Text(message),
+                title="[accent]MODEL[/accent]  NO ACTION EXECUTED",
+                title_align="left",
+                border_style="cyan",
+                padding=(1, 1),
+            )
+        )
 
     def feedback_prompt(self) -> str:
         """Read required operator feedback for a rejected proposal."""
@@ -722,6 +812,7 @@ class TerminalUI:
         *,
         command: ActionCommand | None,
         state_version: str | None,
+        completion_evidence: str | None = None,
     ) -> None:
         """Render the bounded output returned by one approved command."""
         stdout = observation.command_stdout or "(no stdout)"
@@ -743,10 +834,13 @@ class TerminalUI:
                 ("Resources", _joined(observation.discovered_resources)),
                 ("Execution", observation.execution_id),
                 ("State", state_version or "unchanged"),
+                ("Goal evidence", completion_evidence or "Not yet verified"),
             ),
             state="SUCCESS" if observation.success else "FAILED",
             state_style="success" if observation.success else "failure",
         )
+        if completion_evidence is not None:
+            self.success("OBJECTIVE VERIFIED", completion_evidence)
 
     def finished(self, *, failed: bool) -> None:
         """Render the terminal state of a scenario run."""
@@ -786,7 +880,8 @@ class TerminalUI:
 
 def parse_choice(raw: str, candidates: tuple[CandidateCard, ...]) -> TerminalChoice:
     """Parse a terminal choice without ever defaulting to approval."""
-    value = raw.strip().lower()
+    stripped = raw.strip()
+    value = stripped.lower()
     if value in {"q", "quit", "terminate"}:
         return TerminalChoice(DecisionKind.TERMINATE)
     if value in {"a", "alternatives"}:
@@ -794,17 +889,52 @@ def parse_choice(raw: str, candidates: tuple[CandidateCard, ...]) -> TerminalCho
     if value in {"x", "reject-all"}:
         return TerminalChoice(DecisionKind.REJECT_ALL)
 
+    if value == "message":
+        raise ValueError("message requires text")
+    if value.startswith("message "):
+        question = stripped[len("message ") :].strip()
+        if (
+            len(question) >= 2
+            and question[0] == question[-1]
+            and question[0] in {'"', "'"}
+        ):
+            question = question[1:-1].strip()
+        if not question:
+            raise ValueError("message requires text")
+        return TerminalChoice(question=question)
+
+    for prefix, inspection in (("s", "source"), ("i", "input")):
+        if value.startswith(prefix):
+            candidate_id = _candidate_identifier(value[1:], candidates)
+            return TerminalChoice(
+                candidate_id=candidate_id,
+                inspection=inspection,
+            )
+
     decision = DecisionKind.APPROVE
     number = value
     if value.startswith("r"):
         decision = DecisionKind.REJECT
         number = value[1:].strip()
     if not number.isdigit():
-        raise ValueError("enter 1-3, r1-r3, a, x, or q")
+        if stripped:
+            return TerminalChoice(question=stripped)
+        raise ValueError("enter 1-3, r1-r3, a, x, q, or a message")
+    candidate_id = _candidate_identifier(number, candidates)
+    return TerminalChoice(decision, candidate_id)
+
+
+def _candidate_identifier(
+    number: str,
+    candidates: tuple[CandidateCard, ...],
+) -> str:
+    """Resolve one displayed one-based candidate number."""
+    if not number.isdigit():
+        raise ValueError("the inspection command requires a displayed number")
     index = int(number) - 1
     if index < 0 or index >= len(candidates):
         raise ValueError("the selected candidate number is not displayed")
-    return TerminalChoice(decision, candidates[index].proposal.candidate_id)
+    return candidates[index].proposal.candidate_id
 
 
 def _joined(values: tuple[str, ...]) -> str:

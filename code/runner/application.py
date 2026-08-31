@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import traceback
 from dataclasses import dataclass
@@ -10,16 +11,19 @@ from typing import Protocol
 
 from dotenv import load_dotenv
 
+from action_agent.service import ActionAgentService
 from core.config import Paths
 from core.errors import NotFoundError
 from core.ids import new_id
 from core.models import (
+    CandidateCard,
     CreateEngagementRequest,
     CycleResult,
     DecisionKind,
     EngagementStatus,
     MatrixSnapshot,
     OperatorDecision,
+    ReviewStage,
 )
 from core.tracing import DebugTrace
 from environment.repository import EnvironmentRepository
@@ -84,6 +88,12 @@ class InfrastructureGatewayBuilder(Protocol):
     """Gateway image operation needed by sandbox setup."""
 
     def build(self) -> GatewayBuildReport: ...
+
+
+class ActionAssistant(Protocol):
+    """Non-authorizing model conversation for a pending action."""
+
+    def answer(self, card: CandidateCard, question: str) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +389,7 @@ def run_planner(request: PlannerRunRequest) -> int:
             paths=paths,
             trace=trace,
         )
+        action_assistant = ActionAgentService(gemini)
         engagement = planner.create(
             CreateEngagementRequest(
                 objective=scenario.objective,
@@ -416,6 +427,7 @@ def run_planner(request: PlannerRunRequest) -> int:
         return _operator_loop(
             planner,
             launchpad,
+            action_assistant,
             scenario,
             result,
             trace,
@@ -586,6 +598,7 @@ def _ensure_snapshot(
 def _operator_loop(
     planner: GreenAgent,
     launchpad: LaunchpadService,
+    action_assistant: ActionAssistant,
     scenario: PlannerScenario,
     result: CycleResult,
     trace: DebugTrace,
@@ -602,9 +615,58 @@ def _operator_loop(
                     terminal.choice_prompt(result.review_stage),
                     result.candidates,
                 )
-                break
             except ValueError as error:
                 terminal.invalid_choice(str(error))
+                continue
+            if choice.inspection is not None:
+                if result.review_stage != ReviewStage.ACTION_EXECUTION:
+                    terminal.invalid_choice(
+                        "source and input inspection are available during action review"
+                    )
+                    continue
+                card = _displayed_candidate(result, choice.candidate_id)
+                command = card.action_command
+                if command is None:
+                    terminal.invalid_choice("the displayed action has no command")
+                    continue
+                if choice.inspection == "input":
+                    terminal.command_input(command.input_preview)
+                    continue
+                try:
+                    source, digest = _registered_tool_source(command.tool_source)
+                except PlannerConfigurationError as error:
+                    terminal.invalid_choice(str(error))
+                    continue
+                terminal.command_source(
+                    reference=command.tool_source,
+                    installation=command.tool_installation,
+                    digest=digest,
+                    content=source,
+                )
+                continue
+            if choice.question:
+                if result.review_stage != ReviewStage.ACTION_EXECUTION:
+                    terminal.invalid_choice(
+                        "free-form model interaction starts after technique selection"
+                    )
+                    continue
+                if not result.candidates:
+                    terminal.invalid_choice(
+                        "no pending action is available for model interaction"
+                    )
+                    continue
+                card = result.candidates[0]
+                try:
+                    answer = action_assistant.answer(
+                        card,
+                        choice.question,
+                    )
+                except (RuntimeError, ValueError) as error:
+                    terminal.invalid_choice(str(error))
+                    continue
+                terminal.agent_message(answer)
+                continue
+            break
 
         if choice.decision in {
             DecisionKind.REJECT,
@@ -624,6 +686,8 @@ def _operator_loop(
             )
 
         current = planner.get(result.engagement_id)
+        if choice.decision is None:
+            raise PlannerConfigurationError("operator choice has no decision")
         decision = OperatorDecision(
             engagement_id=current.engagement_id,
             decision=choice.decision,
@@ -644,10 +708,12 @@ def _operator_loop(
         launchpad.decide(decision)
         result = planner.decide(decision)
         if result.execution_observation is not None:
+            completion_evidence = _completion_evidence(scenario, result)
             terminal.command_output(
                 result.execution_observation,
                 command=result.executed_command,
                 state_version=result.resulting_state_version,
+                completion_evidence=completion_evidence,
             )
         else:
             terminal.cycle_message(result.message)
@@ -662,3 +728,58 @@ def _operator_loop(
     failed = result.status == EngagementStatus.FAILED
     terminal.finished(failed=failed)
     return 1 if failed else 0
+
+
+def _displayed_candidate(
+    result: CycleResult,
+    candidate_id: str | None,
+) -> CandidateCard:
+    for card in result.candidates:
+        if card.proposal.candidate_id == candidate_id:
+            return card
+    raise PlannerConfigurationError("inspection references an undisplayed candidate")
+
+
+def _completion_evidence(
+    scenario: PlannerScenario,
+    result: CycleResult,
+) -> str | None:
+    """Return a flag only when approved provider evidence matches the preview."""
+    template = scenario.completion.flag_template
+    command = result.executed_command
+    observation = result.execution_observation
+    if template is None or command is None or observation is None:
+        return None
+    if not observation.success or command.approval_id is None:
+        return None
+    created_resources = {
+        effect.removeprefix("Create ")
+        for effect in command.side_effects
+        if effect.startswith("Create ")
+    }
+    if not created_resources.intersection(observation.discovered_resources):
+        raise PlannerConfigurationError(
+            "scenario completion evidence does not match the approved side effect"
+        )
+    return template.replace("{approval_id}", command.approval_id)
+
+
+def _registered_tool_source(reference: str) -> tuple[str, str]:
+    """Read one explicitly registered repository tool source."""
+    allowed = {"execution/gateway/gcs_upload.py"}
+    if reference not in allowed:
+        raise PlannerConfigurationError("this action has no inspectable tool source")
+    path = (CODE_DIRECTORY / reference).resolve()
+    if not path.is_relative_to(CODE_DIRECTORY.resolve()):
+        raise PlannerConfigurationError("registered tool source is outside the application")
+    try:
+        encoded = path.read_bytes()
+    except OSError:
+        raise PlannerConfigurationError("registered tool source is unavailable") from None
+    if len(encoded) > 65_536:
+        raise PlannerConfigurationError("registered tool source exceeds the display limit")
+    try:
+        content = encoded.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PlannerConfigurationError("registered tool source is not UTF-8 text") from None
+    return content, hashlib.sha256(encoded).hexdigest()

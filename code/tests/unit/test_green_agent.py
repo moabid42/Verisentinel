@@ -1,3 +1,4 @@
+import json
 import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -141,9 +142,13 @@ def decision(engagement, kind: DecisionKind, candidate_id: str | None = None):
 
 def test_gcs_action_command_has_resolved_approval_object() -> None:
     command = GreenAgent._action_command(
-        "technique:test",
-        "projects/project/buckets/scenario-target",
-        ("storage.objects.create",),
+        engagement_id="engagement_" + "1" * 32,
+        action_id="technique:test",
+        identity="runner@project.iam.gserviceaccount.com",
+        target="projects/project/buckets/scenario-target",
+        required_permissions=("storage.objects.create",),
+        observed_permissions=("storage.objects.create",),
+        expected_capabilities=(),
     )
 
     assert shlex.split(command.display) == [
@@ -156,6 +161,20 @@ def test_gcs_action_command_has_resolved_approval_object() -> None:
     ]
     assert "<" not in command.display
     assert ">" not in command.display
+    assert command.prepared_by == "deterministic_action_resolver"
+    assert "assembled in memory after approval" in command.input_summary
+    assert "no local payload file exists" in command.input_summary
+    assert command.side_effects == (
+        f"Create gs://scenario-target/actions/{command.approval_id}.json",
+    )
+    assert command.tool_source == "execution/gateway/gcs_upload.py"
+    assert "was not created by the model" in command.tool_installation
+    preview = json.loads(command.input_preview)
+    assert preview["approval_id"] == command.approval_id
+    assert preview["operation"] == "catalog.technique"
+    assert preview["observed_permission_footprint"] == [
+        "storage.objects.create"
+    ]
 
 
 def test_green_agent_publishes_only_admissible_candidates(tmp_path: Path) -> None:

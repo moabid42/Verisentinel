@@ -223,6 +223,18 @@ class ActionCommand(ImmutableModel):
     display: str = Field(min_length=1, max_length=4096)
     provider_operation: Literal["catalog.technique"] = "catalog.technique"
     parameter_model: Literal["technique.none.v1"] = "technique.none.v1"
+    prepared_by: Literal["deterministic_action_resolver"] = (
+        "deterministic_action_resolver"
+    )
+    input_summary: str = Field(
+        default="Typed action input is assembled in memory after approval.",
+        min_length=1,
+        max_length=1024,
+    )
+    input_preview: str = Field(default="{}", min_length=2, max_length=65_536)
+    tool_source: str = Field(default="", max_length=256)
+    tool_installation: str = Field(default="", max_length=512)
+    side_effects: tuple[str, ...] = ()
 
 
 class CandidateCard(ImmutableModel):

@@ -119,6 +119,32 @@ class ModelSettings(ImmutableModel):
         return value
 
 
+class CompletionSettings(ImmutableModel):
+    """Deterministic evidence required before displaying scenario completion."""
+
+    flag_template: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @field_validator("flag_template")
+    @classmethod
+    def flag_template_has_one_approval_identifier(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        if (
+            value.count("{approval_id}") != 1
+            or not value.startswith("FLAG{")
+            or not value.endswith("}")
+        ):
+            raise ValueError(
+                "flag_template must be a FLAG value containing one {approval_id}"
+            )
+        if "{" in value.removeprefix("FLAG{").replace("{approval_id}", ""):
+            raise ValueError("flag_template contains an unsupported placeholder")
+        return value
+
+
 class PlannerScenario(ImmutableModel):
     name: str = Field(min_length=1)
     objective: str = Field(min_length=1)
@@ -128,6 +154,7 @@ class PlannerScenario(ImmutableModel):
     starting_service_account: StartingServiceAccount
     detections: DetectionProfile = Field(default_factory=DetectionProfile)
     model: ModelSettings = Field(default_factory=ModelSettings)
+    completion: CompletionSettings = Field(default_factory=CompletionSettings)
 
     @field_validator("target_scope")
     @classmethod

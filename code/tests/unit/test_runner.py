@@ -965,8 +965,23 @@ def test_terminal_choice_never_defaults_to_an_approval() -> None:
     assert parse_choice("r1", candidates).decision == DecisionKind.REJECT
     assert parse_choice("a", candidates).decision == DecisionKind.REQUEST_ALTERNATIVES
     assert parse_choice("q", candidates).decision == DecisionKind.TERMINATE
+    source = parse_choice("s1", candidates)
+    assert source.decision is None
+    assert source.inspection == "source"
+    assert source.candidate_id == "candidate"
+    pending_input = parse_choice("i1", candidates)
+    assert pending_input.decision is None
+    assert pending_input.inspection == "input"
+    question = parse_choice("where did this tool come from?", candidates)
+    assert question.decision is None
+    assert question.question == "where did this tool come from?"
+    explicit_message = parse_choice('message "tell me a story"', candidates)
+    assert explicit_message.decision is None
+    assert explicit_message.question == "tell me a story"
     with pytest.raises(ValueError):
         parse_choice("", candidates)
+    with pytest.raises(ValueError, match="message requires text"):
+        parse_choice("message", candidates)
 
 
 def test_terminal_review_displays_candidate_evidence() -> None:
@@ -1016,6 +1031,19 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
                     "--bucket scenario-target --object "
                     f"actions/approval_{'1' * 32}.json"
                 ),
+                input_summary=(
+                    "The approval envelope will be assembled in memory after "
+                    "approval and passed on stdin; no local payload file exists."
+                ),
+                side_effects=(
+                    "Create gs://scenario-target/actions/approval_"
+                    + "1" * 32
+                    + ".json",
+                ),
+                tool_source="execution/gateway/gcs_upload.py",
+                tool_installation=(
+                    "Bundled during sandbox build; it was not created by the model."
+                ),
             )
         }
     )
@@ -1031,6 +1059,16 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
     assert "/usr/local/bin/python" in rendered
     assert "gcs_upload.py" in rendered
     assert "<approval_id>" not in rendered
+    assert "Deterministic action resolver (not the model)" in rendered
+    assert "Not run; no side effect occurred" in rendered
+    assert "assembled in memory after approval" in rendered
+    assert "no local payload file exists" in rendered
+    assert "Will change" in rendered
+    assert "gs://scenario-target/actions/approval_" in rendered
+    assert "Revalidate" in rendered
+    assert "record one-time approval" in rendered
+    assert "execution/gateway/gcs_upload.py" in rendered
+    assert "not created by the model" in rendered
     assert "Reason" in rendered
     assert "Covered" not in rendered
     assert "Validation" not in rendered
@@ -1078,6 +1116,9 @@ def test_terminal_renders_approved_command_output() -> None:
         observation,
         command=command,
         state_version="sha256:state",
+        completion_evidence=(
+            "FLAG{gcs-action-delivery:approval_" + "1" * 32 + "}"
+        ),
     )
 
     rendered = stream.getvalue()
@@ -1088,6 +1129,33 @@ def test_terminal_renders_approved_command_output() -> None:
     assert "/usr/local/bin/python" in rendered
     assert "gcp-approval" in rendered
     assert "sha256:state" in rendered
+    assert "FLAG{gcs-action-delivery:approval_" in rendered
+    assert "OBJECTIVE VERIFIED" in rendered
     assert rendered.index("Stdout") < rendered.index("Explanation")
     assert rendered.index("Explanation") < rendered.index("Next steps")
     assert "<approval_id>" not in rendered
+
+
+def test_terminal_renders_registered_source_input_and_model_turn() -> None:
+    stream = StringIO()
+    terminal = TerminalUI(
+        Console(file=stream, color_system=None, highlight=False, width=100)
+    )
+
+    terminal.command_source(
+        reference="execution/gateway/gcs_upload.py",
+        installation="Copied into the gateway image during sandbox build.",
+        digest="a" * 64,
+        content='print("tool source")\n',
+    )
+    terminal.command_input('{"approval_id":"approval_123"}')
+    terminal.agent_message("This is a preinstalled tool; nothing has executed.")
+
+    rendered = stream.getvalue()
+    assert "REGISTERED TOOL SOURCE" in rendered
+    assert "execution/gateway/gcs_upload.py" in rendered
+    assert 'print("tool source")' in rendered
+    assert "PENDING COMMAND INPUT" in rendered
+    assert '"approval_id":"approval_123"' in rendered
+    assert "Credential material is injected only after approval" in rendered
+    assert "MODEL  NO ACTION EXECUTED" in rendered

@@ -99,7 +99,12 @@ sequenceDiagram
     Green->>Store: Publish at most three cards
     Green->>UI: Return validated review queue
     UI-->>Operator: Show evidence and alternatives
-    Operator->>UI: Approve one explicit candidate
+    Operator->>UI: Select one explicit technique
+    Green->>Val: Revalidate selected technique
+    Green->>Prop: Request its registered action
+    Green->>UI: Show exact command, input provenance, and side effects
+    UI-->>Operator: Request explicit command approval
+    Operator->>UI: Approve and run one exact command
     UI->>Store: Record version-bound decision
     UI->>Green: Submit version-bound decision
     Green->>Val: Validate candidate again
@@ -119,6 +124,7 @@ code/
 ├── environment/   Versioned identity, permission, resource, and capability state
 ├── validator/     Bitset and Z3-equivalent Boolean validation
 ├── proposer/      Candidate retrieval and required Gemini structured ranking
+├── action_agent/  Non-authorizing model conversation for pending action review
 ├── green_agent/   Engagement lifecycle and orchestration
 ├── launchpad/     Human review records and decision service
 ├── execution/     Approval, typed actions, credential leases, providers, and attempts
@@ -350,12 +356,19 @@ Inside the persistent development shell, a successful `sandbox connect` enters
 an application prompt scoped to the scenario service account. `env show`
 reports the declared and current Environment Brain state. `env analyse` first
 publishes validated techniques for selection without executing them. After a
-technique is selected, it publishes a concise typed command and one- or
-two-sentence reason for a separate execution decision. A rejection requires
+technique is selected, it publishes a typed command as a separate proposed
+step. The review identifies the deterministic command source, confirms that the
+command has not run, explains how its input will be created, and lists its
+external side effects. The model recommends catalog entries but never creates
+the preinstalled tool or target resource. During action review, `s1` displays
+the complete registered tool source and its digest, while `i1` displays the
+exact non-secret input document. Any other non-empty text is sent to Gemini as
+a question or instruction and cannot imply approval. A rejection requires
 feedback, which is supplied to the next bounded proposal round. An approved
-command prints its bounded provider output and completes the engagement rather
-than automatically restarting technique selection. Enter `/back` to leave the
-prompt without disconnecting and `/sandbox` to return to it.
+command prints its bounded provider output and any verified goal evidence,
+then completes the engagement rather than automatically restarting technique
+selection. Enter `/back` to leave the prompt without disconnecting and
+`/sandbox` to return to it.
 
 The development bucket has uniform access, enforced public-access prevention, and a one-day object
 lifecycle. The execution capsule remains on an internal network. A separate fixed gateway container
@@ -405,22 +418,35 @@ Gemini ranks typed IAMouflage techniques. The Green Agent validates every propos
 three admissible candidates. The terminal launchpad accepts only explicit input:
 
 ```text
-1-3       approve that displayed candidate
+1-3       select a technique, or approve and run a displayed command
 r1-r3     reject that displayed candidate
+s1-s3     display the complete source of a registered command tool
+i1-i3     display the exact non-secret input for a pending command
+text      ask or instruct Gemini without authorizing execution
 a         request alternatives
 x         reject all
 q         terminate without execution
 ```
 
-An approval triggers fresh validation, a one-time approval record, one guarded capsule delivery,
-and a new environment-state version. Rejecting or terminating never calls the provider. Empty or
-malformed input never defaults to approval.
+Technique selection does not authorize execution. The subsequent command review states that no
+side effect has occurred and shows the exact command, in-memory input provenance, and resources it
+will change. Command approval then triggers fresh validation, a one-time approval record, one
+guarded capsule delivery, and a new environment-state version. Rejecting or terminating never
+calls the provider. Empty or malformed input never defaults to approval.
+
+Executable paths shown under `/opt/verisentinel/` are inside the immutable
+runtime image. They are not files created by Gemini. For example,
+`/opt/verisentinel/gcs_upload.py` is copied from
+`execution/gateway/gcs_upload.py` by `execution/gateway/Dockerfile` during
+`sandbox build`; the action review exposes this provenance and lets the
+operator inspect the exact source before approval.
 
 ## Debug and model-conversation logs
 
 Every run prints paths for an append-only JSONL trace and a dedicated model-conversation JSONL
-under `runtime/traces/`. A human-readable progress log is written beside them. Event names are
-also echoed to stderr. While Gemini is working, `request_heartbeat` is emitted every configured
+under `runtime/traces/`. A human-readable progress log is written beside them. Event names and
+safe high-level model decision summaries are also echoed to stderr. While Gemini is working,
+`request_heartbeat` is emitted every configured
 interval; an application-level hard deadline ends the attempt even if the SDK blocks. Use
 `--quiet-trace` to disable only the stderr echo.
 
@@ -577,7 +603,7 @@ Run the main planner suite:
 Run Ruff:
 
 ```bash
-.venv/bin/ruff check core ingestion environment validator proposer green_agent launchpad execution runner tests
+.venv/bin/ruff check action_agent core ingestion environment validator proposer green_agent launchpad execution runner tests
 ```
 
 Run the IAMouflage suite separately:

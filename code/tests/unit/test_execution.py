@@ -208,9 +208,7 @@ def test_changing_approved_argument_digest_invalidates_execution(tmp_path: Path)
             "arguments_digest": stable_digest({"unexpected": True}),
         }
     )
-    changed_request = request.model_copy(
-        update={"approval_id": changed_approval.approval_id}
-    )
+    changed_request = request.model_copy(update={"approval_id": changed_approval.approval_id})
     service.register_approval(changed_approval)
 
     with pytest.raises(AuthorizationError, match="arguments"):
@@ -222,9 +220,7 @@ def test_changing_approved_argument_digest_invalidates_execution(tmp_path: Path)
 def test_changing_approved_artifact_invalidates_execution(tmp_path: Path) -> None:
     provider = RecordingProvider()
     service, request = execution_fixture(tmp_path, provider=provider)
-    changed = request.model_copy(
-        update={"artifact_digest": "sha256:" + "f" * 64}
-    )
+    changed = request.model_copy(update={"artifact_digest": "sha256:" + "f" * 64})
 
     with pytest.raises(AuthorizationError, match="artifact_digest"):
         service.execute(changed)
@@ -388,10 +384,23 @@ def test_provider_failure_is_redacted_and_closes_lease(tmp_path: Path) -> None:
     assert attempt.status == ExecutionAttemptStatus.FAILED
     assert attempt.failure_code == "provider_execution_failed"
     persisted = "".join(
-        path.read_text(encoding="utf-8")
-        for path in (tmp_path / "execution").rglob("*.json")
+        path.read_text(encoding="utf-8") for path in (tmp_path / "execution").rglob("*.json")
     )
     assert ACCESS_TOKEN not in persisted
+
+
+def test_bounded_capsule_failure_is_available_for_repair(tmp_path: Path) -> None:
+    from execution.capsule.provider import CapsuleExecutionError
+
+    provider = RecordingProvider()
+    provider.error = CapsuleExecutionError("capsule process failed")
+    service, request = execution_fixture(tmp_path, provider=provider)
+
+    with pytest.raises(
+        AuthorizationError,
+        match="execution provider failed: capsule process failed",
+    ):
+        service.execute(request)
 
 
 def test_provider_timeout_consumes_approval_and_closes_lease(tmp_path: Path) -> None:
@@ -445,9 +454,7 @@ def test_provider_observation_must_match_approved_specification(
 
 def test_provider_observation_is_bounded(tmp_path: Path) -> None:
     provider = RecordingProvider()
-    provider.observation_update = {
-        "discovered_resources": tuple("r" * 1000 for _ in range(70))
-    }
+    provider.observation_update = {"discovered_resources": tuple("r" * 1000 for _ in range(70))}
     service, request = execution_fixture(tmp_path, provider=provider)
 
     with pytest.raises(AuthorizationError, match="execution provider failed"):
@@ -459,17 +466,14 @@ def test_provider_observation_is_bounded(tmp_path: Path) -> None:
 
 def test_provider_cannot_return_credential_material(tmp_path: Path) -> None:
     provider = RecordingProvider()
-    provider.observation_update = {
-        "api_response_summary": f"response included {ACCESS_TOKEN}"
-    }
+    provider.observation_update = {"api_response_summary": f"response included {ACCESS_TOKEN}"}
     service, request = execution_fixture(tmp_path, provider=provider)
 
     with pytest.raises(AuthorizationError, match="execution provider failed"):
         service.execute(request)
 
     persisted = "".join(
-        path.read_text(encoding="utf-8")
-        for path in (tmp_path / "execution").rglob("*.json")
+        path.read_text(encoding="utf-8") for path in (tmp_path / "execution").rglob("*.json")
     )
     assert ACCESS_TOKEN not in persisted
 

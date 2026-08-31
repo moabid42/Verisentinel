@@ -314,14 +314,10 @@ class GreenAgent:
         """Propose one registered action for the selected technique."""
         selected_technique_id = engagement.selected_technique_id
         if selected_technique_id is None:
-            raise DataConsistencyError(
-                "action review requires an explicitly selected technique"
-            )
+            raise DataConsistencyError("action review requires an explicitly selected technique")
         environment = self.environment.current(engagement.engagement_id)
         if environment.matrix_version != engagement.matrix_version:
-            raise VersionConflictError(
-                "environment and engagement matrix versions differ"
-            )
+            raise VersionConflictError("environment and engagement matrix versions differ")
         state = self.environment.state_vector(
             engagement.engagement_id,
             engagement.identity,
@@ -331,9 +327,7 @@ class GreenAgent:
         technique = matrix.techniques.get(selected_technique_id)
         if technique is None:
             raise DataConsistencyError("selected technique is not in the matrix snapshot")
-        state_result = self.validator.validate_state(
-            StateValidationRequest(state=state)
-        )
+        state_result = self.validator.validate_state(StateValidationRequest(state=state))
         engagement.status = EngagementStatus.PROPOSING
         engagement.state_version = environment.state_version
         engagement.candidates = {}
@@ -365,9 +359,7 @@ class GreenAgent:
                             "parameter_model": "technique.none.v1",
                         },
                     ),
-                    "monitored_permission_count": len(
-                        state_result.monitored_permission_indices
-                    ),
+                    "monitored_permission_count": len(state_result.monitored_permission_indices),
                     "unmonitored_permission_count": len(
                         state_result.unmonitored_permission_indices
                     ),
@@ -439,8 +431,7 @@ class GreenAgent:
                     proposal=proposal.model_copy(update={"rank": 1}),
                     validation=validation,
                     required_permissions=tuple(
-                        matrix.permissions[index]
-                        for index in technique.required_indices
+                        matrix.permissions[index] for index in technique.required_indices
                     ),
                     technique_title=technique.title,
                     expected_capabilities=technique.grants,
@@ -456,14 +447,13 @@ class GreenAgent:
                             target=proposal.target,
                             rationale=proposal.rationale,
                             required_permissions=tuple(
-                                matrix.permissions[index]
-                                for index in technique.required_indices
+                                matrix.permissions[index] for index in technique.required_indices
                             ),
                             observed_permissions=tuple(
-                                matrix.permissions[index]
-                                for index in technique.footprint_indices
+                                matrix.permissions[index] for index in technique.footprint_indices
                             ),
                             expected_capabilities=technique.grants,
+                            repair_feedback=engagement.rejection_feedback,
                         )
                     ),
                 )
@@ -478,9 +468,7 @@ class GreenAgent:
             break
 
         engagement.status = EngagementStatus.AWAITING_APPROVAL
-        engagement.candidates = {
-            card.proposal.candidate_id: card for card in accepted
-        }
+        engagement.candidates = {card.proposal.candidate_id: card for card in accepted}
         engagement.rejection_feedback = tuple(feedback[-100:])
         self.repository.save(engagement)
         self.execution.authorize(self._authorization(engagement, enabled=True))
@@ -499,8 +487,7 @@ class GreenAgent:
         )
         return self._result(
             engagement,
-            f"Published {len(accepted)} model-authored file change(s) for "
-            "explicit write approval.",
+            f"Published {len(accepted)} model-authored file change(s) for explicit write approval.",
         )
 
     def decide(self, decision: OperatorDecision) -> CycleResult:
@@ -633,8 +620,7 @@ class GreenAgent:
         self._trace(
             "technique_selected",
             summary=(
-                f"Selected technique {candidate.proposal.technique_id}; no action "
-                "was executed."
+                f"Selected technique {candidate.proposal.technique_id}; no action was executed."
             ),
             engagement_id=engagement.engagement_id,
             candidate_id=candidate.proposal.candidate_id,
@@ -651,13 +637,11 @@ class GreenAgent:
         """Write one reviewed artifact without authorizing its command."""
         command = candidate.action_command
         artifact = command.artifact if command is not None else None
-        if command is None or artifact is None or artifact.written:
-            raise DataConsistencyError(
-                "artifact candidate has no unwritten model-authored file"
-            )
+        if command is None or command.approval_id is None or artifact is None or artifact.written:
+            raise DataConsistencyError("artifact candidate has no unwritten model-authored file")
         written = self.artifact_writer.write(
             engagement.engagement_id,
-            candidate.proposal.candidate_id,
+            command.approval_id,
             artifact,
         )
         command = command.model_copy(
@@ -737,9 +721,7 @@ class GreenAgent:
             or not artifact.written
             or not artifact.workspace_path
         ):
-            raise DataConsistencyError(
-                "execution candidate has no matching typed command"
-            )
+            raise DataConsistencyError("execution candidate has no matching typed command")
         approval = ApprovalRecord(
             approval_id=action_command.approval_id,
             engagement_id=engagement.engagement_id,
@@ -802,12 +784,31 @@ class GreenAgent:
                 error_type=type(error).__name__,
                 error=str(error),
             )
-            engagement.status = EngagementStatus.FAILED
+            diagnostic = str(error)[:2048]
+            feedback = (
+                f"Execution attempt {approval.approval_id} failed after its "
+                "one-time approval was consumed. Do not assume a remote side "
+                f"effect did or did not occur. Diagnostic: {diagnostic}"
+            )
+            engagement.status = EngagementStatus.CREATED
+            engagement.review_stage = ReviewStage.ACTION_ARTIFACT
             engagement.last_error = str(error)
             engagement.pending_approval_id = None
+            engagement.candidates = {}
+            engagement.rejection_feedback = tuple([*engagement.rejection_feedback, feedback][-100:])
             self.repository.save(engagement)
-            self.execution.authorize(self._authorization(engagement, enabled=False))
-            raise
+            repaired = self.cycle(engagement.engagement_id)
+            return repaired.model_copy(
+                update={
+                    "message": (
+                        "The approved command failed and its approval was "
+                        "consumed. Nothing was rerun automatically. A fresh "
+                        "model-authored file passed preflight and now requires "
+                        "new file and command approvals; the previous remote "
+                        "outcome may be uncertain."
+                    )
+                }
+            )
         engagement.state_version = updated.state_version
         self._trace(
             "environment_updated",

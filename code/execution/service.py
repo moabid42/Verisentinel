@@ -13,6 +13,7 @@ from core.models import (
     ExecutionSpec,
 )
 from core.tracing import DebugTrace
+from execution.capsule.provider import CapsuleExecutionError
 from execution.credentials import CredentialResolver
 from execution.guardrails import verify_execution_authority
 from execution.models import EngagementAuthorization, ExecutionAttempt, ExecutionRecord
@@ -58,17 +59,11 @@ class ExecutionService:
                 CapsuleDoctor(configuration, runtime).require_ready()
                 provider_impl = CapsuleExecutionProvider(configuration, runtime)
             else:
-                raise ValueError(
-                    f"execution provider {selected_provider!r} is not registered"
-                )
+                raise ValueError(f"execution provider {selected_provider!r} is not registered")
         elif provider is not None and provider != provider_impl.name:
-            raise ValueError(
-                "execution provider selector does not match the supplied provider"
-            )
+            raise ValueError("execution provider selector does not match the supplied provider")
         if provider_impl.name not in {"simulator", "capsule", "evaluation", "gcp"}:
-            raise ValueError(
-                f"execution provider {provider_impl.name!r} is not registered"
-            )
+            raise ValueError(f"execution provider {provider_impl.name!r} is not registered")
         self.execution_provider = provider_impl
         self.provider = provider_impl.name
         default_enabled = "true" if self.provider == "simulator" else "false"
@@ -79,9 +74,7 @@ class ExecutionService:
         )
         self._lock = RLock()
 
-    def authorize(
-        self, authorization: EngagementAuthorization
-    ) -> EngagementAuthorization:
+    def authorize(self, authorization: EngagementAuthorization) -> EngagementAuthorization:
         return self.repository.authorize(authorization)
 
     def register_approval(self, approval: ApprovalRecord) -> ApprovalRecord:
@@ -177,11 +170,12 @@ class ExecutionService:
             self.repository.fail_attempt(attempt, failure_code=failure_code)
             if not isinstance(error, Exception):
                 raise
-            if (
-                failure_code == "credential_resolution_failed"
-                and isinstance(error, AuthorizationError)
+            if failure_code == "credential_resolution_failed" and isinstance(
+                error, AuthorizationError
             ):
                 raise
+            if isinstance(error, CapsuleExecutionError):
+                raise AuthorizationError(f"execution provider failed: {str(error)[:512]}") from None
             raise AuthorizationError("execution provider failed") from None
 
     @staticmethod
@@ -191,9 +185,7 @@ class ExecutionService:
         access_token: str,
     ) -> ExecutionObservation:
         """Validate bounded provider output against the approved specification."""
-        validated = ExecutionObservation.model_validate(
-            observation.model_dump(mode="json")
-        )
+        validated = ExecutionObservation.model_validate(observation.model_dump(mode="json"))
         expected = (
             spec.engagement_id,
             spec.action.action_id,
@@ -226,14 +218,9 @@ class ExecutionService:
         if isinstance(value, str):
             return expected in value
         if isinstance(value, dict):
-            return any(
-                ExecutionService._contains_value(item, expected)
-                for item in value.values()
-            )
+            return any(ExecutionService._contains_value(item, expected) for item in value.values())
         if isinstance(value, (list, tuple)):
-            return any(
-                ExecutionService._contains_value(item, expected) for item in value
-            )
+            return any(ExecutionService._contains_value(item, expected) for item in value)
         return False
 
     def get(self, execution_id: str) -> ExecutionRecord:

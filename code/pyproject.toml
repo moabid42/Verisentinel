@@ -25,6 +25,9 @@ dependencies = [
 verisentinel = "runner.cli:main"
 
 [project.optional-dependencies]
+copilot = [
+  "deepseek-harness-sdk==0.1.1rc1",
+]
 dev = [
   "pytest>=8.4,<10",
   "pytest-cov>=6.2,<8",
@@ -34,6 +37,7 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = [
   "action_agent",
+  "copilot",
   "core",
   "ingestion",
   "environment",

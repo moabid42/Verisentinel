@@ -249,6 +249,7 @@ class ActionAuthorRequest(ImmutableModel):
     required_permissions: tuple[str, ...]
     observed_permissions: tuple[str, ...]
     expected_capabilities: tuple[str, ...]
+    repair_feedback: tuple[str, ...] = ()
 
 
 class ActionCommand(ImmutableModel):

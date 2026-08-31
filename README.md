@@ -7,6 +7,11 @@ starting state, a language model (Gemini) proposes and ranks known IAM privilege
 techniques — but the model never decides anything. A deterministic checker independently verifies
 each proposal against two conditions:
 
+> **Architecture status.** The current orchestrator has known architectural and operational
+> issues. The next major version will substantially rewrite the orchestration layer instead of
+> continuing to extend the current design incrementally. Until then, treat the copilot and
+> execution workflow as experimental.
+
 1. **Feasibility** — the operator already holds the permissions the technique requires.
 2. **Detection coverage** — the technique's permission footprint does *not* intersect a flattened
    table of permissions that public detection rules watch.

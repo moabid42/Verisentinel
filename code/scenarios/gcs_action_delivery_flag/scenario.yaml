@@ -39,9 +39,9 @@ model:
 
 copilot:
   enabled: true
-  model: gemini-3.6-flash
-  api_key_env: GEMINI_API_KEY
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  model: deepseek-v4-flash
+  api_key_env: DEEPSEEK_API_KEY
+  base_url: https://api.deepseek.com
   timeout_seconds: 300
   maximum_repairs: 3
 

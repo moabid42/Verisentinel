@@ -96,7 +96,7 @@ def test_scenario_loads_opaque_credential_reference(tmp_path: Path) -> None:
         "permissions": ["storage.objects.get"],
     }
     assert scenario.copilot.enabled is False
-    assert scenario.copilot.api_key_env == "GEMINI_API_KEY"
+    assert scenario.copilot.api_key_env == "DEEPSEEK_API_KEY"
 
 
 def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
@@ -118,7 +118,7 @@ def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
 
     assert scenario.copilot.model == "deepseek-v4-flash"
     assert scenario.copilot.enabled is True
-    assert scenario.copilot.base_url == "https://api.deepseek.com/"
+    assert scenario.copilot.base_url == "https://api.deepseek.com"
     assert scenario.copilot.maximum_repairs == 4
 
 

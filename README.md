@@ -149,10 +149,10 @@ python3 -m venv .venv
 .venv/bin/verisentinel corpus build
 ```
 
-**3. Configure Gemini and a scenario** by copying the tracked examples (the real files are gitignored):
+**3. Configure Gemini, DeepSeek Harness, and a scenario** by copying the tracked examples (the real files are gitignored):
 
 ```bash
-cp .env.example .env                       # then add your GEMINI_API_KEY
+cp .env.example .env                       # add GEMINI_API_KEY and DEEPSEEK_API_KEY
 cp scenario.example.yaml scenario.yaml     # then describe your authorized starting state
 ```
 

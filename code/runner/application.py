@@ -396,7 +396,7 @@ def run_planner(request: PlannerRunRequest) -> int:
             copilot_root = paths.runtime / "copilot" / run_id
             copilot_harness = DeepSeekCopilotHarness(
                 api_key=copilot_api_key,
-                model=(scenario.copilot.model or scenario.model.name or "gemini-3.6-flash"),
+                model=scenario.copilot.model,
                 workspace_root=copilot_root / "workspace",
                 session_root=copilot_root / "sessions",
                 base_url=scenario.copilot.base_url,

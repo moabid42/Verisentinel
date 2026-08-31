@@ -147,9 +147,9 @@ class CopilotSettings(ImmutableModel):
     """Pinned coding-harness route used after technique selection."""
 
     enabled: bool = False
-    model: str | None = Field(default=None, min_length=1, max_length=128)
-    api_key_env: str = "GEMINI_API_KEY"
-    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=128)
+    api_key_env: str = "DEEPSEEK_API_KEY"
+    base_url: str = "https://api.deepseek.com"
     timeout_seconds: float = Field(default=300.0, gt=0, le=600)
     maximum_repairs: int = Field(default=3, ge=1, le=10)
 
@@ -166,7 +166,7 @@ class CopilotSettings(ImmutableModel):
         parsed = urlparse(value)
         if parsed.scheme != "https" or not parsed.netloc or parsed.username:
             raise ValueError("base_url must be an HTTPS endpoint without credentials")
-        return value.rstrip("/") + "/"
+        return value.rstrip("/")
 
 
 class PlannerScenario(ImmutableModel):

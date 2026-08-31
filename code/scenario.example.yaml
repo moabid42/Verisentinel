@@ -32,13 +32,11 @@ model:
   heartbeat_seconds: 5
 
 # DeepSeek Harness owns the persistent coding session after technique selection.
-# This example routes its OpenAI-compatible adapter to Gemini; set api_key_env to
-# DEEPSEEK_API_KEY and base_url to https://api.deepseek.com/ for DeepSeek models.
 copilot:
   enabled: true
-  model: gemini-3.6-flash
-  api_key_env: GEMINI_API_KEY
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  model: deepseek-v4-flash
+  api_key_env: DEEPSEEK_API_KEY
+  base_url: https://api.deepseek.com
   timeout_seconds: 300
   maximum_repairs: 3
 

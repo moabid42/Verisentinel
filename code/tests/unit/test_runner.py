@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from io import StringIO
@@ -9,6 +10,7 @@ from typer.testing import CliRunner
 
 import runner.cli as cli_module
 from core.models import (
+    ActionArtifact,
     ActionCommand,
     CandidateCard,
     CandidateValidationResult,
@@ -1021,16 +1023,14 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
         Console(file=stream, color_system=None, highlight=False, width=100)
     )
 
+    content = "print('approved')\n"
     action_card = candidate().model_copy(
         update={
             "action_command": ActionCommand(
                 action_id=candidate().proposal.action_id,
                 approval_id="approval_" + "1" * 32,
-                display=(
-                    "/usr/local/bin/python /opt/verisentinel/gcs_upload.py "
-                    "--bucket scenario-target --object "
-                    f"actions/approval_{'1' * 32}.json"
-                ),
+                display="/usr/local/bin/python /workspace/action.py",
+                prepared_by="model",
                 input_summary=(
                     "The approval envelope will be assembled in memory after "
                     "approval and passed on stdin; no local payload file exists."
@@ -1040,9 +1040,20 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
                     + "1" * 32
                     + ".json",
                 ),
-                tool_source="execution/gateway/gcs_upload.py",
+                tool_source="action.py",
                 tool_installation=(
-                    "Bundled during sandbox build; it was not created by the model."
+                    "Authored by fixture-model and written after explicit approval."
+                ),
+                artifact=ActionArtifact(
+                    content=content,
+                    digest=(
+                        "sha256:"
+                        + hashlib.sha256(content.encode("utf-8")).hexdigest()
+                    ),
+                    source_model="fixture-model",
+                    rationale="Fixture action.",
+                    written=True,
+                    workspace_path="/runtime/action.py",
                 ),
             )
         }
@@ -1057,18 +1068,18 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
     assert "ACTION COMMAND REVIEW" in rendered
     assert "EXECUTION APPROVAL REQUIRED" in rendered
     assert "/usr/local/bin/python" in rendered
-    assert "gcs_upload.py" in rendered
+    assert "/workspace/action.py" in rendered
     assert "<approval_id>" not in rendered
-    assert "Deterministic action resolver (not the model)" in rendered
-    assert "Not run; no side effect occurred" in rendered
+    assert "Model-authored file + fixed harness" in rendered
+    assert "command not run" in rendered
     assert "assembled in memory after approval" in rendered
     assert "no local payload file exists" in rendered
     assert "Will change" in rendered
     assert "gs://scenario-target/actions/approval_" in rendered
     assert "Revalidate" in rendered
     assert "record one-time approval" in rendered
-    assert "execution/gateway/gcs_upload.py" in rendered
-    assert "not created by the model" in rendered
+    assert "/runtime/action.py" in rendered
+    assert "Authored by fixture-model" in rendered
     assert "Reason" in rendered
     assert "Covered" not in rendered
     assert "Validation" not in rendered

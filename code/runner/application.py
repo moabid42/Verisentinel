@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import traceback
 from dataclasses import dataclass
@@ -381,15 +380,16 @@ def run_planner(request: PlannerRunRequest) -> int:
             provider="capsule",
             enabled=True,
         )
+        action_assistant = ActionAgentService(gemini)
         planner = GreenAgent(
             snapshots=snapshots,
             proposer=proposer,
             launchpad=launchpad,
             execution=execution,
+            action_author=action_assistant,
             paths=paths,
             trace=trace,
         )
-        action_assistant = ActionAgentService(gemini)
         engagement = planner.create(
             CreateEngagementRequest(
                 objective=scenario.objective,
@@ -619,7 +619,10 @@ def _operator_loop(
                 terminal.invalid_choice(str(error))
                 continue
             if choice.inspection is not None:
-                if result.review_stage != ReviewStage.ACTION_EXECUTION:
+                if result.review_stage not in {
+                    ReviewStage.ACTION_ARTIFACT,
+                    ReviewStage.ACTION_EXECUTION,
+                }:
                     terminal.invalid_choice(
                         "source and input inspection are available during action review"
                     )
@@ -630,22 +633,31 @@ def _operator_loop(
                     terminal.invalid_choice("the displayed action has no command")
                     continue
                 if choice.inspection == "input":
+                    if result.review_stage != ReviewStage.ACTION_EXECUTION:
+                        terminal.invalid_choice(
+                            "exact command input is available after file approval"
+                        )
+                        continue
                     terminal.command_input(command.input_preview)
                     continue
-                try:
-                    source, digest = _registered_tool_source(command.tool_source)
-                except PlannerConfigurationError as error:
-                    terminal.invalid_choice(str(error))
+                artifact = command.artifact
+                if artifact is None:
+                    terminal.invalid_choice(
+                        "the displayed action has no model-authored source"
+                    )
                     continue
                 terminal.command_source(
-                    reference=command.tool_source,
+                    reference=artifact.workspace_path or artifact.path,
                     installation=command.tool_installation,
-                    digest=digest,
-                    content=source,
+                    digest=artifact.digest,
+                    content=artifact.content,
                 )
                 continue
             if choice.question:
-                if result.review_stage != ReviewStage.ACTION_EXECUTION:
+                if result.review_stage not in {
+                    ReviewStage.ACTION_ARTIFACT,
+                    ReviewStage.ACTION_EXECUTION,
+                }:
                     terminal.invalid_choice(
                         "free-form model interaction starts after technique selection"
                     )
@@ -762,24 +774,3 @@ def _completion_evidence(
             "scenario completion evidence does not match the approved side effect"
         )
     return template.replace("{approval_id}", command.approval_id)
-
-
-def _registered_tool_source(reference: str) -> tuple[str, str]:
-    """Read one explicitly registered repository tool source."""
-    allowed = {"execution/gateway/gcs_upload.py"}
-    if reference not in allowed:
-        raise PlannerConfigurationError("this action has no inspectable tool source")
-    path = (CODE_DIRECTORY / reference).resolve()
-    if not path.is_relative_to(CODE_DIRECTORY.resolve()):
-        raise PlannerConfigurationError("registered tool source is outside the application")
-    try:
-        encoded = path.read_bytes()
-    except OSError:
-        raise PlannerConfigurationError("registered tool source is unavailable") from None
-    if len(encoded) > 65_536:
-        raise PlannerConfigurationError("registered tool source exceeds the display limit")
-    try:
-        content = encoded.decode("utf-8")
-    except UnicodeDecodeError:
-        raise PlannerConfigurationError("registered tool source is not UTF-8 text") from None
-    return content, hashlib.sha256(encoded).hexdigest()

@@ -222,12 +222,15 @@ class ActionArtifact(ImmutableModel):
     source_model: str = Field(min_length=1, max_length=128)
     rationale: str = Field(min_length=1, max_length=2048)
     written: bool = False
+    workspace_path: str = Field(default="", max_length=1024)
 
     @model_validator(mode="after")
     def digest_matches_content(self) -> ActionArtifact:
         expected = "sha256:" + hashlib.sha256(self.content.encode("utf-8")).hexdigest()
         if self.digest != expected:
             raise ValueError("artifact digest does not match its content")
+        if self.written != bool(self.workspace_path):
+            raise ValueError("written artifacts require exactly one workspace path")
         return self
 
 
@@ -295,6 +298,7 @@ class ReviewStage(StrEnum):
     """Operator review stage for an active engagement."""
 
     TECHNIQUE_SELECTION = "technique_selection"
+    ACTION_ARTIFACT = "action_artifact"
     ACTION_EXECUTION = "action_execution"
 
 

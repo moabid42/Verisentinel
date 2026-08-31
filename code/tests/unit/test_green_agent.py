@@ -1,13 +1,16 @@
-import json
-import shlex
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from action_agent.workspace import ActionWorkspace
 from core.config import Paths
 from core.errors import DataConsistencyError, VersionConflictError
 from core.models import (
+    ActionArtifact,
+    ActionAuthorRequest,
+    ActionCommand,
     CreateEngagementRequest,
     DecisionKind,
     EngagementStatus,
@@ -63,6 +66,29 @@ class StaticTokenInspector:
         )
 
 
+class StaticActionAuthor:
+    """Return a bounded unwritten action file for orchestration tests."""
+
+    def author(self, request: ActionAuthorRequest) -> ActionCommand:
+        content = "print('fixture')\n"
+        artifact = ActionArtifact(
+            content=content,
+            digest="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            source_model="fixture-model",
+            rationale="Fixture action file.",
+        )
+        return ActionCommand(
+            action_id=request.action_id,
+            approval_id=request.approval_id,
+            display="/usr/local/bin/python /workspace/action.py",
+            prepared_by="model",
+            tool_source="action.py",
+            tool_installation="Proposed by fixture-model; not written.",
+            side_effects=(f"Invoke {request.action_id} against {request.target}",),
+            artifact=artifact,
+        )
+
+
 def services(tmp_path: Path, proposal_factory=None):
     snapshots = SnapshotRepository(tmp_path / "snapshots")
     matrix = IngestorService(paths=Paths(), repository=snapshots).build()
@@ -115,6 +141,8 @@ def services(tmp_path: Path, proposal_factory=None):
         validator=ValidatorService(snapshots=snapshots),
         launchpad=launchpad,
         execution=execution,
+        action_author=StaticActionAuthor(),
+        artifact_writer=ActionWorkspace(tmp_path / "action-workspace"),
     )
     permissions = tuple(matrix.permissions[index] for index in selected.required_indices)
     engagement = green.create(
@@ -138,43 +166,6 @@ def decision(engagement, kind: DecisionKind, candidate_id: str | None = None):
         matrix_version=engagement.matrix_version,
         operator="human@example.test",
     )
-
-
-def test_gcs_action_command_has_resolved_approval_object() -> None:
-    command = GreenAgent._action_command(
-        engagement_id="engagement_" + "1" * 32,
-        action_id="technique:test",
-        identity="runner@project.iam.gserviceaccount.com",
-        target="projects/project/buckets/scenario-target",
-        required_permissions=("storage.objects.create",),
-        observed_permissions=("storage.objects.create",),
-        expected_capabilities=(),
-    )
-
-    assert shlex.split(command.display) == [
-        "/usr/local/bin/python",
-        "/opt/verisentinel/gcs_upload.py",
-        "--bucket",
-        "scenario-target",
-        "--object",
-        f"actions/{command.approval_id}.json",
-    ]
-    assert "<" not in command.display
-    assert ">" not in command.display
-    assert command.prepared_by == "deterministic_action_resolver"
-    assert "assembled in memory after approval" in command.input_summary
-    assert "no local payload file exists" in command.input_summary
-    assert command.side_effects == (
-        f"Create gs://scenario-target/actions/{command.approval_id}.json",
-    )
-    assert command.tool_source == "execution/gateway/gcs_upload.py"
-    assert "was not created by the model" in command.tool_installation
-    preview = json.loads(command.input_preview)
-    assert preview["approval_id"] == command.approval_id
-    assert preview["operation"] == "catalog.technique"
-    assert preview["observed_permission_footprint"] == [
-        "storage.objects.create"
-    ]
 
 
 def test_green_agent_publishes_only_admissible_candidates(tmp_path: Path) -> None:
@@ -217,7 +208,7 @@ def test_technique_selection_precedes_approved_action_execution(
         )
     )
 
-    assert action_cycle.review_stage == ReviewStage.ACTION_EXECUTION
+    assert action_cycle.review_stage == ReviewStage.ACTION_ARTIFACT
     assert action_cycle.status == EngagementStatus.AWAITING_APPROVAL
     assert action_cycle.candidates
     assert action_cycle.candidates[0].action_command is not None
@@ -231,11 +222,29 @@ def test_technique_selection_precedes_approved_action_execution(
         == proposal.technique_id
     )
 
-    completed = green.decide(
+    command_cycle = green.decide(
         decision(
             green.get(engagement.engagement_id),
             DecisionKind.APPROVE,
             action_cycle.candidates[0].proposal.candidate_id,
+        )
+    )
+
+    assert command_cycle.review_stage == ReviewStage.ACTION_EXECUTION
+    command = command_cycle.candidates[0].action_command
+    assert command is not None
+    assert command.artifact is not None
+    assert command.artifact.written
+    assert Path(command.artifact.workspace_path).read_text(encoding="utf-8") == (
+        command.artifact.content
+    )
+    assert execution.repository.executions.list_keys() == ()
+
+    completed = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            command_cycle.candidates[0].proposal.candidate_id,
         )
     )
 
@@ -246,10 +255,10 @@ def test_technique_selection_precedes_approved_action_execution(
     assert not completed.candidates
     assert completed.execution_observation is not None
     assert completed.execution_observation.success
-    assert completed.executed_command == action_cycle.candidates[0].action_command
+    assert completed.executed_command == command_cycle.candidates[0].action_command
     execution_id = execution.repository.executions.list_keys()[0]
     assert execution.repository.get(execution_id).approval.approval_id == (
-        action_cycle.candidates[0].action_command.approval_id
+        command_cycle.candidates[0].action_command.approval_id
     )
     assert completed.resulting_state_version == green.environment.current(
         engagement.engagement_id
@@ -280,14 +289,14 @@ def test_action_rejection_feedback_reguides_the_next_proposal(
 
     next_action = green.decide(rejected)
 
-    assert next_action.review_stage == ReviewStage.ACTION_EXECUTION
+    assert next_action.review_stage == ReviewStage.ACTION_ARTIFACT
     assert next_action.candidates
     assert execution.repository.executions.list_keys() == ()
     proposer = green.proposer
     assert isinstance(proposer, StaticProposer)
     assert feedback in proposer.requests[-1].previous_rejections[-1]
     assert proposer.requests[-1].environment_summary["review_stage"] == (
-        ReviewStage.ACTION_EXECUTION.value
+        ReviewStage.ACTION_ARTIFACT.value
     )
     assert proposer.requests[-1].environment_summary["allowed_actions"] == (
         {

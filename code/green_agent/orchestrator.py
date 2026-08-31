@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
-import shlex
 from threading import RLock
 
 from core.config import Paths
 from core.errors import DataConsistencyError, VersionConflictError
 from core.ids import new_id
 from core.models import (
+    ActionAuthorRequest,
     ActionCommand,
     ApprovalRecord,
     CandidateCard,
@@ -33,7 +32,12 @@ from environment.models import ApplyObservationRequest, InitializeEnvironmentReq
 from execution.guardrails import target_is_allowed
 from execution.models import EngagementAuthorization
 from execution.service import ExecutionService
-from green_agent.gateways import CandidatePublisher, ExecutionGateway
+from green_agent.gateways import (
+    ActionAuthor,
+    ArtifactWriter,
+    CandidatePublisher,
+    ExecutionGateway,
+)
 from green_agent.repository import GreenAgentRepository
 from ingestion.snapshot import SnapshotRepository
 from launchpad.models import CandidateSet
@@ -52,6 +56,8 @@ class GreenAgent:
         validator: ValidatorService | None = None,
         launchpad: CandidatePublisher | None = None,
         execution: ExecutionGateway | None = None,
+        action_author: ActionAuthor | None = None,
+        artifact_writer: ArtifactWriter | None = None,
         paths: Paths | None = None,
         maximum_rounds_per_cycle: int = 3,
         proposals_per_round: int = 10,
@@ -65,6 +71,12 @@ class GreenAgent:
         self.validator = validator or ValidatorService(snapshots=self.snapshots, paths=paths)
         self.launchpad = launchpad or LaunchpadService(paths=paths)
         self.execution = execution or ExecutionService(snapshots=self.snapshots, paths=paths)
+        self.action_author = action_author
+        if artifact_writer is None:
+            from action_agent.workspace import ActionWorkspace
+
+            artifact_writer = ActionWorkspace(paths.runtime / "action-agent")
+        self.artifact_writer = artifact_writer
         self.maximum_rounds_per_cycle = maximum_rounds_per_cycle
         self.proposals_per_round = proposals_per_round
         self.trace = trace
@@ -114,7 +126,10 @@ class GreenAgent:
         with self._lock:
             engagement = self.get(engagement_id)
             self._require_active(engagement)
-            if engagement.review_stage == ReviewStage.ACTION_EXECUTION:
+            if engagement.review_stage in {
+                ReviewStage.ACTION_ARTIFACT,
+                ReviewStage.ACTION_EXECUTION,
+            }:
                 return self._action_cycle(engagement)
             self._trace(
                 "cycle_started",
@@ -341,7 +356,7 @@ class GreenAgent:
                 environment_summary={
                     **self.environment.render_summary(environment),
                     "target_scope": engagement.target_scope,
-                    "review_stage": ReviewStage.ACTION_EXECUTION.value,
+                    "review_stage": engagement.review_stage.value,
                     "selected_technique_id": selected_technique_id,
                     "allowed_actions": (
                         {
@@ -430,19 +445,26 @@ class GreenAgent:
                     technique_title=technique.title,
                     expected_capabilities=technique.grants,
                     action_command=self._action_command(
-                        engagement_id=engagement.engagement_id,
-                        action_id=proposal.action_id,
-                        identity=proposal.identity,
-                        target=proposal.target,
-                        required_permissions=tuple(
-                            matrix.permissions[index]
-                            for index in technique.required_indices
-                        ),
-                        observed_permissions=tuple(
-                            matrix.permissions[index]
-                            for index in technique.footprint_indices
-                        ),
-                        expected_capabilities=technique.grants,
+                        ActionAuthorRequest(
+                            engagement_id=engagement.engagement_id,
+                            approval_id=new_id("approval"),
+                            action_id=proposal.action_id,
+                            technique_id=proposal.technique_id,
+                            technique_title=technique.title,
+                            objective=engagement.objective,
+                            identity=proposal.identity,
+                            target=proposal.target,
+                            rationale=proposal.rationale,
+                            required_permissions=tuple(
+                                matrix.permissions[index]
+                                for index in technique.required_indices
+                            ),
+                            observed_permissions=tuple(
+                                matrix.permissions[index]
+                                for index in technique.footprint_indices
+                            ),
+                            expected_capabilities=technique.grants,
+                        )
                     ),
                 )
             )
@@ -466,8 +488,8 @@ class GreenAgent:
         self._trace(
             "action_candidates_published",
             summary=(
-                f"Prepared {len(accepted)} command preview(s); no command has "
-                "run and no listed side effect has occurred."
+                f"Prepared {len(accepted)} model-authored file proposal(s); no "
+                "file was written and no command has run."
             ),
             engagement_id=engagement.engagement_id,
             candidate_ids=[card.proposal.candidate_id for card in accepted],
@@ -477,8 +499,8 @@ class GreenAgent:
         )
         return self._result(
             engagement,
-            f"Published {len(accepted)} validated action command(s) for "
-            "explicit execution approval.",
+            f"Published {len(accepted)} model-authored file change(s) for "
+            "explicit write approval.",
         )
 
     def decide(self, decision: OperatorDecision) -> CycleResult:
@@ -558,6 +580,8 @@ class GreenAgent:
                     candidate,
                     environment.state_version,
                 )
+            if engagement.review_stage == ReviewStage.ACTION_ARTIFACT:
+                return self._approve_artifact(engagement, candidate)
             return self._approve(engagement, candidate, decision, environment.state_version)
 
     def _select_technique(
@@ -600,7 +624,7 @@ class GreenAgent:
             )
         engagement.status = EngagementStatus.CREATED
         engagement.state_version = current_state_version
-        engagement.review_stage = ReviewStage.ACTION_EXECUTION
+        engagement.review_stage = ReviewStage.ACTION_ARTIFACT
         engagement.selected_technique_id = candidate.proposal.technique_id
         engagement.candidates = {}
         engagement.excluded_technique_ids = ()
@@ -618,6 +642,52 @@ class GreenAgent:
             state_version=current_state_version,
         )
         return self.cycle(engagement.engagement_id)
+
+    def _approve_artifact(
+        self,
+        engagement: Engagement,
+        candidate: CandidateCard,
+    ) -> CycleResult:
+        """Write one reviewed artifact without authorizing its command."""
+        command = candidate.action_command
+        artifact = command.artifact if command is not None else None
+        if command is None or artifact is None or artifact.written:
+            raise DataConsistencyError(
+                "artifact candidate has no unwritten model-authored file"
+            )
+        written = self.artifact_writer.write(
+            engagement.engagement_id,
+            candidate.proposal.candidate_id,
+            artifact,
+        )
+        command = command.model_copy(
+            update={
+                "artifact": written,
+                "tool_installation": (
+                    f"Authored by {written.source_model} and written after explicit "
+                    f"approval to {written.workspace_path}."
+                ),
+            }
+        )
+        candidate = candidate.model_copy(update={"action_command": command})
+        engagement.review_stage = ReviewStage.ACTION_EXECUTION
+        engagement.candidates = {candidate.proposal.candidate_id: candidate}
+        self.repository.save(engagement)
+        self._publish(engagement, (candidate,))
+        self._trace(
+            "action_artifact_written",
+            summary=(
+                f"Wrote approved {written.path}; its command remains unapproved "
+                "and has not executed."
+            ),
+            engagement_id=engagement.engagement_id,
+            candidate_id=candidate.proposal.candidate_id,
+            artifact_digest=written.digest,
+        )
+        return self._result(
+            engagement,
+            "Approved file written; the exact command now requires separate approval.",
+        )
 
     def _approve(
         self,
@@ -770,81 +840,20 @@ class GreenAgent:
             resulting_state_version=updated.state_version,
         )
 
-    @staticmethod
-    def _action_command(
-        *,
-        engagement_id: str,
-        action_id: str,
-        identity: str,
-        target: str,
-        required_permissions: tuple[str, ...],
-        observed_permissions: tuple[str, ...],
-        expected_capabilities: tuple[str, ...],
-    ) -> ActionCommand:
-        """Build a factual preview for one registered provider operation."""
-        approval_id = new_id("approval")
-        parts = target.split("/")
+    def _action_command(self, request: ActionAuthorRequest) -> ActionCommand:
+        """Ask the configured model boundary for one unwritten action artifact."""
+        if self.action_author is None:
+            raise DataConsistencyError("model action author is not configured")
+        command = self.action_author.author(request)
         if (
-            "storage.objects.create" in required_permissions
-            and len(parts) == 4
-            and parts[0] == "projects"
-            and parts[2] == "buckets"
+            command.action_id != request.action_id
+            or command.approval_id != request.approval_id
+            or command.prepared_by != "model"
+            or command.artifact is None
+            or command.artifact.written
         ):
-            object_name = f"actions/{approval_id}.json"
-            display = shlex.join(
-                (
-                    "/usr/local/bin/python",
-                    "/opt/verisentinel/gcs_upload.py",
-                    "--bucket",
-                    parts[3],
-                    "--object",
-                    object_name,
-                )
-            )
-            input_summary = (
-                "The approval envelope will be assembled in memory after approval "
-                "and passed on stdin; no local payload file exists."
-            )
-            side_effects = (f"Create gs://{parts[3]}/{object_name}",)
-            tool_source = "execution/gateway/gcs_upload.py"
-            tool_installation = (
-                "Bundled during `sandbox build` by execution/gateway/Dockerfile "
-                "and copied to /opt/verisentinel/gcs_upload.py in the immutable "
-                "gateway image; it was not created by the model or this run."
-            )
-        else:
-            display = f"catalog.technique {action_id} --target {target}"
-            input_summary = (
-                "Typed action parameters will be assembled in memory after approval."
-            )
-            side_effects = (f"Invoke {action_id} against {target}",)
-            tool_source = ""
-            tool_installation = "Registered catalog operation; no generated file."
-        input_preview = json.dumps(
-            {
-                "action_id": action_id,
-                "approval_id": approval_id,
-                "engagement_id": engagement_id,
-                "expected_capabilities": list(expected_capabilities),
-                "identity": identity,
-                "observed_permission_footprint": list(observed_permissions),
-                "operation": "catalog.technique",
-                "parameters": {},
-                "target": target,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        return ActionCommand(
-            action_id=action_id,
-            approval_id=approval_id,
-            display=display,
-            input_summary=input_summary,
-            input_preview=input_preview,
-            tool_source=tool_source,
-            tool_installation=tool_installation,
-            side_effects=side_effects,
-        )
+            raise DataConsistencyError("model action author returned an invalid binding")
+        return command
 
     @staticmethod
     def _resolve_proposal(

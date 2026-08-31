@@ -620,17 +620,19 @@ class TerminalUI:
         review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION,
     ) -> None:
         """Render admissible candidates and their validation evidence."""
-        action_review = review_stage == ReviewStage.ACTION_EXECUTION
+        artifact_review = review_stage == ReviewStage.ACTION_ARTIFACT
+        command_review = review_stage == ReviewStage.ACTION_EXECUTION
+        action_review = artifact_review or command_review
         if not candidates:
             self.console.print(
                 Panel(
                     (
-                        "No validated action commands are available in this cycle."
+                        "No validated action steps are available in this cycle."
                         if action_review
                         else "No admissible techniques are available in this cycle."
                     ),
                     title=(
-                        "[accent]ACTION COMMAND REVIEW[/accent]"
+                        "[accent]ACTION STEP REVIEW[/accent]"
                         if action_review
                         else "[accent]TECHNIQUE REVIEW[/accent]"
                     ),
@@ -639,13 +641,21 @@ class TerminalUI:
             )
             return
         heading = Text(
-            "ACTION COMMAND REVIEW" if action_review else "TECHNIQUE REVIEW",
+            (
+                "FILE CHANGE REVIEW"
+                if artifact_review
+                else "ACTION COMMAND REVIEW"
+                if command_review
+                else "TECHNIQUE REVIEW"
+            ),
             style="accent",
         )
         heading.append(
             (
-                "  VALIDATED · EXECUTION APPROVAL REQUIRED"
-                if action_review
+                "  VALIDATED · FILE-WRITE APPROVAL REQUIRED"
+                if artifact_review
+                else "  VALIDATED · EXECUTION APPROVAL REQUIRED"
+                if command_review
                 else "  VALIDATED · SELECTION REQUIRED"
             ),
             style="warning",
@@ -659,34 +669,54 @@ class TerminalUI:
             details.add_column()
             if action_review:
                 command = card.action_command
-                details.add_row(
-                    "Command",
-                    command.display if command is not None else "unavailable",
-                )
                 if command is not None:
-                    details.add_row(
-                        "Prepared by",
-                        "Deterministic action resolver (not the model)",
-                    )
-                    details.add_row(
-                        "Tool origin",
-                        command.tool_installation or "No source file is registered.",
-                    )
-                    if command.tool_source:
-                        details.add_row("Source", command.tool_source)
-                    details.add_row("Current state", "Not run; no side effect occurred")
-                    details.add_row("Input", command.input_summary)
-                    details.add_row(
-                        "Will change",
-                        _joined(command.side_effects),
-                    )
-                    details.add_row(
-                        "After approval",
-                        (
-                            "Revalidate → record one-time approval → assemble input "
-                            "→ run in the controlled gateway → validate output"
-                        ),
-                    )
+                    artifact = command.artifact
+                    if artifact_review:
+                        details.add_row(
+                            "File",
+                            artifact.path if artifact is not None else "unavailable",
+                        )
+                        details.add_row(
+                            "Authored by",
+                            artifact.source_model if artifact is not None else "unavailable",
+                        )
+                        details.add_row(
+                            "Current state",
+                            "Proposed in memory; not written and not executed",
+                        )
+                        details.add_row(
+                            "SHA-256",
+                            artifact.digest if artifact is not None else "unavailable",
+                        )
+                        details.add_row(
+                            "After approval",
+                            "Write this exact file, then request command approval",
+                        )
+                    else:
+                        details.add_row("Command", command.display)
+                        details.add_row("Prepared by", "Model-authored file + fixed harness")
+                        details.add_row("Tool origin", command.tool_installation)
+                        details.add_row(
+                            "Source",
+                            (
+                                artifact.workspace_path
+                                if artifact is not None
+                                else "unavailable"
+                            ),
+                        )
+                        details.add_row(
+                            "Current state",
+                            "File written; command not run; no remote side effect occurred",
+                        )
+                        details.add_row("Input", command.input_summary)
+                        details.add_row("Will change", _joined(command.side_effects))
+                        details.add_row(
+                            "After approval",
+                            (
+                                "Revalidate → record one-time approval → run the "
+                                "reviewed file in the capsule → validate output"
+                            ),
+                        )
                 details.add_row("Reason", proposal.rationale)
             else:
                 details.add_row("Technique", proposal.technique_id)
@@ -701,16 +731,32 @@ class TerminalUI:
                 details.add_row("Rationale", proposal.rationale)
                 details.add_row("Validation", validation.explanation)
             title = (
-                "COMMAND"
-                if action_review
+                "FILE"
+                if artifact_review
+                else "COMMAND"
+                if command_review
                 else card.technique_title or proposal.technique_id
             )
             panel_title = Text()
             panel_title.append(f"{index:02d}", style="accent")
             panel_title.append(f"  {title}")
+            body: object = details
+            if artifact_review and card.action_command is not None:
+                artifact = card.action_command.artifact
+                if artifact is not None:
+                    body = Group(
+                        details,
+                        Text(""),
+                        Syntax(
+                            artifact.content,
+                            "python",
+                            line_numbers=True,
+                            word_wrap=True,
+                        ),
+                    )
             self.console.print(
                 Panel(
-                    details,
+                    body,
                     title=panel_title,
                     title_align="left",
                     border_style="cyan",
@@ -723,21 +769,28 @@ class TerminalUI:
         review_stage: ReviewStage = ReviewStage.TECHNIQUE_SELECTION,
     ) -> str:
         """Prompt for one decision without introducing an approval default."""
-        verb = (
-            "approve & run"
-            if review_stage == ReviewStage.ACTION_EXECUTION
-            else "select"
-        )
+        verb = "select"
+        if review_stage == ReviewStage.ACTION_ARTIFACT:
+            verb = "approve & write"
+        elif review_stage == ReviewStage.ACTION_EXECUTION:
+            verb = "approve & run"
         self.console.print(
             f"[accent]1–3[/accent] {verb}   [accent]r1–r3[/accent] reject   "
             "[accent]a[/accent] alternatives   [accent]x[/accent] reject all   "
             "[accent]q[/accent] terminate"
         )
-        if review_stage == ReviewStage.ACTION_EXECUTION:
+        if review_stage in {
+            ReviewStage.ACTION_ARTIFACT,
+            ReviewStage.ACTION_EXECUTION,
+        }:
             self.console.print(
-                "[accent]s1[/accent] view tool source   "
-                "[accent]i1[/accent] view exact input   "
-                "[accent]message[/accent] ask or instruct the model"
+                "[accent]s1[/accent] view complete source   "
+                + (
+                    "[accent]i1[/accent] view exact input   "
+                    if review_stage == ReviewStage.ACTION_EXECUTION
+                    else ""
+                )
+                + "[accent]message[/accent] ask or instruct the model"
             )
         return self.console.input("[accent]Decision › [/accent]")
 

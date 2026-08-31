@@ -1,5 +1,6 @@
 """Tests for CLI-facing application services."""
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 import runner.application as application_module
 from core.config import Paths
 from core.models import (
+    ActionArtifact,
     ActionCommand,
     CandidateCard,
     CandidateValidationResult,
@@ -347,23 +349,6 @@ def test_operator_rejection_requires_and_forwards_feedback(
     ]
 
 
-def test_registered_tool_source_returns_repository_file_and_digest() -> None:
-    content, digest = application_module._registered_tool_source(
-        "execution/gateway/gcs_upload.py"
-    )
-
-    assert content.startswith('"""Fixed command for uploading')
-    assert len(digest) == 64
-
-
-def test_registered_tool_source_rejects_unregistered_path() -> None:
-    with pytest.raises(
-        application_module.PlannerConfigurationError,
-        match="no inspectable tool source",
-    ):
-        application_module._registered_tool_source("/etc/passwd")
-
-
 def test_completion_evidence_requires_matching_created_resource() -> None:
     approval_id = "approval_" + "1" * 32
     resource = f"gs://scenario-target/actions/{approval_id}.json"
@@ -405,13 +390,25 @@ def test_completion_evidence_requires_matching_created_resource() -> None:
 def test_operator_action_session_inspects_and_asks_before_deciding(
     tmp_path: Path,
 ) -> None:
+    content = "print('approved')\n"
     command = ActionCommand(
         action_id="technique:test",
         approval_id="approval_" + "1" * 32,
         display="registered-command",
         input_preview='{"operation":"catalog.technique"}',
-        tool_source="execution/gateway/gcs_upload.py",
-        tool_installation="Copied during sandbox build.",
+        prepared_by="model",
+        tool_source="action.py",
+        tool_installation="Written after explicit approval.",
+        artifact=ActionArtifact(
+            content=content,
+            digest=(
+                "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+            ),
+            source_model="fixture-model",
+            rationale="Fixture action.",
+            written=True,
+            workspace_path="/runtime/action.py",
+        ),
     )
     card = CandidateCard(
         proposal=Proposal(
@@ -522,7 +519,7 @@ def test_operator_action_session_inspects_and_asks_before_deciding(
     )
 
     assert result == 0
-    assert terminal.source.startswith('"""Fixed command for uploading')
+    assert terminal.source == content
     assert terminal.input_preview == command.input_preview
     assert terminal.answer == "The tool was copied during sandbox build."
     assert len(submitted) == 1

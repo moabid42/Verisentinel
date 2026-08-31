@@ -5,13 +5,37 @@ from typing import Protocol
 import httpx
 
 from core.config import ServiceURLs
-from core.models import ApprovalRecord, ExecutionRequest, ExecutionResult
+from core.models import (
+    ActionArtifact,
+    ActionAuthorRequest,
+    ActionCommand,
+    ApprovalRecord,
+    ExecutionRequest,
+    ExecutionResult,
+)
 from execution.models import EngagementAuthorization
 from launchpad.models import CandidateSet
 
 
 class CandidatePublisher(Protocol):
     def publish(self, candidate_set: CandidateSet) -> CandidateSet: ...
+
+
+class ActionAuthor(Protocol):
+    """Model boundary that may propose, but cannot write, one action file."""
+
+    def author(self, request: ActionAuthorRequest) -> ActionCommand: ...
+
+
+class ArtifactWriter(Protocol):
+    """File boundary invoked only after an explicit artifact approval."""
+
+    def write(
+        self,
+        engagement_id: str,
+        candidate_id: str,
+        artifact: ActionArtifact,
+    ) -> ActionArtifact: ...
 
 
 class ExecutionGateway(Protocol):

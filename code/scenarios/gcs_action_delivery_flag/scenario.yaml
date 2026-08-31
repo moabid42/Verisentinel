@@ -39,10 +39,11 @@ model:
 
 copilot:
   enabled: true
-  model: deepseek-v4-flash
-  api_key_env: DEEPSEEK_API_KEY
-  base_url: https://api.deepseek.com
-  timeout_seconds: 300
+  provider: google-vertex
+  model: gemini-3.7-flash
+  home_env: DSH_HOME
+  source_root_env: DSH_SOURCE_ROOT
+  timeout_seconds: 1800
   maximum_repairs: 3
 
 completion:

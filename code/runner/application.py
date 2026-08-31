@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import traceback
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 
 from action_agent.harness import HarnessActionAgent
 from action_agent.service import ActionAgentService
-from copilot.deepseek import DeepSeekCopilotHarness
+from copilot.dsh_web import DshWebCopilotHarness
 from core.config import Paths
 from core.errors import NotFoundError
 from core.ids import new_id
@@ -303,13 +304,12 @@ def run_planner(request: PlannerRunRequest) -> int:
         raise PlannerConfigurationError(
             "GEMINI_API_KEY is empty; add it to code/.env before running"
         )
-    copilot_api_key = (
-        os.getenv(scenario.copilot.api_key_env, "").strip() if scenario.copilot.enabled else ""
+    dsh_home_value = (
+        os.getenv(scenario.copilot.home_env, "").strip() if scenario.copilot.enabled else ""
     )
-    if scenario.copilot.enabled and not copilot_api_key:
+    if scenario.copilot.enabled and not dsh_home_value:
         raise PlannerConfigurationError(
-            f"{scenario.copilot.api_key_env} is empty; configure the DeepSeek "
-            "Harness model credential before running"
+            f"{scenario.copilot.home_env} is empty; configure the full DSH home before running"
         )
 
     paths = Paths()
@@ -325,14 +325,14 @@ def run_planner(request: PlannerRunRequest) -> int:
     trace = DebugTrace(
         trace_path,
         run_id,
-        secrets=tuple(secret for secret in (api_key, copilot_api_key) if secret),
+        secrets=(api_key,),
         echo=not request.quiet_trace,
         progress_path=progress_path,
     )
     conversation_trace = DebugTrace(
         conversation_path,
         run_id,
-        secrets=tuple(secret for secret in (api_key, copilot_api_key) if secret),
+        secrets=(api_key,),
         echo=False,
     )
     conversation_trace.emit(
@@ -351,7 +351,8 @@ def run_planner(request: PlannerRunRequest) -> int:
         trace_path=str(trace_path),
     )
 
-    copilot_harness: DeepSeekCopilotHarness | None = None
+    copilot_harness: DshWebCopilotHarness | None = None
+    terminal = TerminalUI()
     try:
         snapshots = SnapshotRepository(paths.artifacts / "snapshots")
         matrix = _ensure_snapshot(
@@ -394,16 +395,33 @@ def run_planner(request: PlannerRunRequest) -> int:
         )
         if scenario.copilot.enabled:
             copilot_root = paths.runtime / "copilot" / run_id
-            copilot_harness = DeepSeekCopilotHarness(
-                api_key=copilot_api_key,
+            source_root_value = os.getenv(scenario.copilot.source_root_env, "").strip()
+            source_root = (
+                Path(source_root_value).expanduser()
+                if source_root_value
+                else CODE_DIRECTORY.parent / "deepseek-harness"
+            )
+
+            def handoff_dsh(launch_url: str, session_id: str, workspace: Path) -> None:
+                webbrowser.open(launch_url)
+                terminal.copilot_handoff(
+                    launch_url=launch_url,
+                    session_id=session_id,
+                    workspace=workspace,
+                    provider=scenario.copilot.provider,
+                    model=scenario.copilot.model,
+                )
+
+            copilot_harness = DshWebCopilotHarness(
+                checkout=source_root,
+                home=Path(dsh_home_value).expanduser(),
+                provider=scenario.copilot.provider,
                 model=scenario.copilot.model,
                 workspace_root=copilot_root / "workspace",
-                session_root=copilot_root / "sessions",
-                base_url=scenario.copilot.base_url,
                 timeout_seconds=scenario.copilot.timeout_seconds,
+                handoff=handoff_dsh,
                 trace=trace,
             )
-            copilot_harness.require_ready()
             action_assistant = HarnessActionAgent(
                 copilot_harness,
                 copilot_root / "workspace",
@@ -443,7 +461,6 @@ def run_planner(request: PlannerRunRequest) -> int:
             execution_provider=execution.provider,
             infrastructure_path=connection.infrastructure_path,
         )
-        terminal = TerminalUI()
         terminal.run_started(
             engagement_id=engagement.engagement_id,
             provider=execution.provider,

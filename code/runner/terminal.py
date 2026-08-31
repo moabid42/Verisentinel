@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from rich.console import Console, Group
@@ -845,6 +846,41 @@ class TerminalUI:
                 border_style="cyan",
                 padding=(1, 1),
             )
+        )
+
+    def copilot_handoff(
+        self,
+        *,
+        launch_url: str,
+        session_id: str,
+        workspace: Path,
+        provider: str,
+        model: str,
+    ) -> None:
+        """Hand the selected action workspace to the full DSH Web interface."""
+        self._key_values(
+            "CODING HARNESS",
+            (
+                ("Interface", launch_url),
+                ("Session", session_id),
+                ("Workspace", str(workspace)),
+                ("Model", f"{provider} / {model}"),
+                (
+                    "Control",
+                    "DSH owns chat, tools, tests, and tool approvals. "
+                    "VeriSentinel resumes after the model turn and contract preflight.",
+                ),
+                (
+                    "Safety",
+                    "No scenario credential is available to DSH; remote execution "
+                    "still requires separate VeriSentinel approval.",
+                ),
+            ),
+            state="WAITING FOR OPERATOR",
+            state_style="warning",
+        )
+        self.console.input(
+            "[accent]Press Enter after the DSH session is visible in the browser › [/accent]"
         )
 
     def feedback_prompt(self) -> str:

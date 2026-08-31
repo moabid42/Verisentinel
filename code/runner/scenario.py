@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 from typing import Literal
-from urllib.parse import urlparse
 
 import yaml
 from pydantic import Field, ValidationError, field_validator
@@ -144,29 +143,30 @@ class CompletionSettings(ImmutableModel):
 
 
 class CopilotSettings(ImmutableModel):
-    """Pinned coding-harness route used after technique selection."""
+    """Full DSH Web route used after technique selection."""
 
     enabled: bool = False
-    model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=128)
-    api_key_env: str = "DEEPSEEK_API_KEY"
-    base_url: str = "https://api.deepseek.com"
-    timeout_seconds: float = Field(default=300.0, gt=0, le=600)
+    provider: str = Field(default="google-vertex", min_length=1, max_length=128)
+    model: str = Field(default="gemini-3.7-flash", min_length=1, max_length=128)
+    home_env: str = "DSH_HOME"
+    source_root_env: str = "DSH_SOURCE_ROOT"
+    timeout_seconds: float = Field(default=1_800.0, gt=0, le=3_600)
     maximum_repairs: int = Field(default=3, ge=1, le=10)
 
-    @field_validator("api_key_env")
+    @field_validator("home_env", "source_root_env")
     @classmethod
-    def api_key_environment_is_safe(cls, value: str) -> str:
+    def path_environment_is_safe(cls, value: str) -> str:
         if _ENVIRONMENT_NAME_PATTERN.fullmatch(value) is None:
-            raise ValueError("api_key_env must be an uppercase environment name")
+            raise ValueError("DSH path references must be uppercase environment names")
         return value
 
-    @field_validator("base_url")
+    @field_validator("provider", "model")
     @classmethod
-    def base_url_is_https(cls, value: str) -> str:
-        parsed = urlparse(value)
-        if parsed.scheme != "https" or not parsed.netloc or parsed.username:
-            raise ValueError("base_url must be an HTTPS endpoint without credentials")
-        return value.rstrip("/")
+    def model_route_is_trimmed(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(character.isspace() for character in normalized):
+            raise ValueError("DSH provider and model names cannot contain whitespace")
+        return normalized
 
 
 class PlannerScenario(ImmutableModel):

@@ -96,7 +96,8 @@ def test_scenario_loads_opaque_credential_reference(tmp_path: Path) -> None:
         "permissions": ["storage.objects.get"],
     }
     assert scenario.copilot.enabled is False
-    assert scenario.copilot.api_key_env == "DEEPSEEK_API_KEY"
+    assert scenario.copilot.provider == "google-vertex"
+    assert scenario.copilot.home_env == "DSH_HOME"
 
 
 def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
@@ -106,9 +107,10 @@ def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
         path.read_text(encoding="utf-8")
         + """copilot:
   enabled: true
-  model: deepseek-v4-flash
-  api_key_env: DEEPSEEK_API_KEY
-  base_url: https://api.deepseek.com
+  provider: google-vertex
+  model: gemini-3.7-flash
+  home_env: DSH_HOME
+  source_root_env: DSH_SOURCE_ROOT
   maximum_repairs: 4
 """,
         encoding="utf-8",
@@ -116,9 +118,10 @@ def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
 
     scenario = load_scenario(path)
 
-    assert scenario.copilot.model == "deepseek-v4-flash"
+    assert scenario.copilot.model == "gemini-3.7-flash"
     assert scenario.copilot.enabled is True
-    assert scenario.copilot.base_url == "https://api.deepseek.com"
+    assert scenario.copilot.provider == "google-vertex"
+    assert scenario.copilot.source_root_env == "DSH_SOURCE_ROOT"
     assert scenario.copilot.maximum_repairs == 4
 
 

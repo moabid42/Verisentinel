@@ -26,7 +26,6 @@ private chain-of-thought. The deterministic validator, not you, decides feasibil
 coverage. An external operator or deterministic evaluation approval policy, not you, decides
 whether any validated action is executed."""
 
-
 class GeminiProposer:
     def __init__(
         self,
@@ -156,6 +155,10 @@ class GeminiProposer:
         prompt_text = json.dumps(prompt, sort_keys=True)
         self._emit(
             "request_prepared",
+            summary=(
+                f"Prepared a read-only ranking request with {len(catalog)} "
+                "cataloged candidate(s); the model cannot execute actions."
+            ),
             model=self.model,
             model_candidates=self.model_candidates,
             thinking_level=self.thinking_level,
@@ -182,6 +185,10 @@ class GeminiProposer:
             started = time.monotonic()
             self._emit(
                 "request_started",
+                summary=(
+                    f"Asking {attempt_model} for a high-level recommendation; "
+                    "waiting for a structured response."
+                ),
                 attempt=attempt,
                 maximum_attempts=self.maximum_attempts,
                 model=attempt_model,
@@ -209,6 +216,7 @@ class GeminiProposer:
                 )
                 self._emit(
                     "request_completed",
+                    summary=choices.decision_summary,
                     model=attempt_model,
                     attempt=attempt,
                     elapsed_seconds=round(time.monotonic() - started, 3),
@@ -324,6 +332,9 @@ class GeminiProposer:
                 elapsed = round(time.monotonic() - started, 1)
                 self._emit(
                     "request_heartbeat",
+                    summary=(
+                        f"Still waiting for {request_model}; {elapsed:g}s elapsed."
+                    ),
                     attempt=attempt,
                     model=request_model,
                     elapsed_seconds=elapsed,

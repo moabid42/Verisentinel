@@ -128,9 +128,16 @@ def test_gemini_interaction_reads_current_sdk_output_envelope(tmp_path: Path) ->
     interactions = SimpleNamespace(create=lambda **kwargs: interaction)
     client = SimpleNamespace(interactions=interactions)
     conversation_path = tmp_path / "conversation.jsonl"
+    progress_path = tmp_path / "progress.log"
     gemini = GeminiProposer(
         client=client,
         maximum_attempts=1,
+        trace=DebugTrace(
+            tmp_path / "trace.jsonl",
+            "test-run",
+            echo=False,
+            progress_path=progress_path,
+        ),
         conversation_trace=DebugTrace(
             conversation_path, "test-run", secrets=("secret",), echo=False
         ),
@@ -148,6 +155,10 @@ def test_gemini_interaction_reads_current_sdk_output_envelope(tmp_path: Path) ->
     assert '"role": "user"' in conversation
     assert '"role": "assistant"' in conversation
     assert '"total_tokens": 125' in conversation
+    progress = progress_path.read_text(encoding="utf-8")
+    assert "the model cannot execute actions" in progress
+    assert f"Asking {gemini.model} for a high-level recommendation" in progress
+    assert expected.decision_summary in progress
 
 
 def test_gemini_has_a_hard_deadline_and_emits_heartbeats(tmp_path: Path, monkeypatch) -> None:

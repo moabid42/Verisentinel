@@ -37,5 +37,12 @@ model:
   maximum_attempts: 2
   heartbeat_seconds: 5
 
+copilot:
+  model: gemini-3.6-flash
+  api_key_env: GEMINI_API_KEY
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  timeout_seconds: 300
+  maximum_repairs: 3
+
 completion:
   flag_template: "FLAG{gcs-action-delivery:{approval_id}}"

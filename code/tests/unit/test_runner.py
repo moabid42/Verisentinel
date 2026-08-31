@@ -89,14 +89,34 @@ def test_scenario_loads_opaque_credential_reference(tmp_path: Path) -> None:
     scenario = load_scenario(path)
 
     assert scenario.starting_service_account.credential_ref == "run/default"
-    assert scenario.infrastructure.path == (
-        "projects/security-sandbox/buckets/scenario-target"
-    )
+    assert scenario.infrastructure.path == ("projects/security-sandbox/buckets/scenario-target")
     assert scenario.model_dump(mode="json")["starting_service_account"] == {
         "identity": "start@security-sandbox.iam.gserviceaccount.com",
         "credential_ref": "run/default",
         "permissions": ["storage.objects.get"],
     }
+    assert scenario.copilot.api_key_env == "GEMINI_API_KEY"
+
+
+def test_scenario_loads_explicit_copilot_settings(tmp_path: Path) -> None:
+    path = tmp_path / "scenario.yaml"
+    write_scenario(path)
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + """copilot:
+  model: deepseek-v4-flash
+  api_key_env: DEEPSEEK_API_KEY
+  base_url: https://api.deepseek.com
+  maximum_repairs: 4
+""",
+        encoding="utf-8",
+    )
+
+    scenario = load_scenario(path)
+
+    assert scenario.copilot.model == "deepseek-v4-flash"
+    assert scenario.copilot.base_url == "https://api.deepseek.com/"
+    assert scenario.copilot.maximum_repairs == 4
 
 
 def test_scenario_loads_safe_relative_terraform_root(tmp_path: Path) -> None:
@@ -104,8 +124,7 @@ def test_scenario_loads_safe_relative_terraform_root(tmp_path: Path) -> None:
     write_scenario(path)
     document = path.read_text(encoding="utf-8").replace(
         "  path: projects/security-sandbox/buckets/scenario-target",
-        "  path: projects/security-sandbox/buckets/scenario-target\n"
-        "  terraform_root: terraform",
+        "  path: projects/security-sandbox/buckets/scenario-target\n  terraform_root: terraform",
     )
     path.write_text(document, encoding="utf-8")
 
@@ -423,9 +442,7 @@ def test_environment_show_renders_connected_permissions(
         objective="Evaluate storage paths",
         identity="start@security-sandbox.iam.gserviceaccount.com",
         target_scope="projects/security-sandbox",
-        infrastructure_path=(
-            "projects/security-sandbox/buckets/scenario-target"
-        ),
+        infrastructure_path=("projects/security-sandbox/buckets/scenario-target"),
         credential_ref="run/default",
         source_kind="impersonate",
         permissions=("storage.objects.create",),
@@ -497,9 +514,7 @@ def test_dev_infrastructure_create_uses_adc_and_scenario(
 
     class Service:
         def create(self, scenario, source, *, location, scenario_path):
-            calls.append(
-                (scenario.name, source.kind, location, scenario_path.parent)
-            )
+            calls.append((scenario.name, source.kind, location, scenario_path.parent))
             return record
 
     monkeypatch.setattr(cli_module, "_infrastructure_service", Service)
@@ -510,9 +525,7 @@ def test_dev_infrastructure_create_uses_adc_and_scenario(
     )
 
     assert result.exit_code == 0
-    assert calls == [
-        ("test-scenario", CredentialSourceKind.ADC, "EU", tmp_path)
-    ]
+    assert calls == [("test-scenario", CredentialSourceKind.ADC, "EU", tmp_path)]
     assert record.infrastructure_id in result.stdout
 
 
@@ -632,11 +645,7 @@ def test_sandbox_connect_selects_safe_mode_defaults(
     calls = []
     connection = SandboxConnection(
         connection_id="connection_" + "3" * 32,
-        mode=(
-            ConnectionMode.DEVELOPMENT
-            if expected_mode
-            else ConnectionMode.REMOTE
-        ),
+        mode=(ConnectionMode.DEVELOPMENT if expected_mode else ConnectionMode.REMOTE),
         infrastructure_id=expected_id,
         infrastructure_path="projects/security-sandbox/buckets/scenario-target",
         scenario_name="test-scenario",
@@ -1001,9 +1010,7 @@ def test_terminal_review_displays_candidate_evidence() -> None:
             ),
         }
     )
-    terminal = TerminalUI(
-        Console(file=stream, color_system=None, highlight=False, width=100)
-    )
+    terminal = TerminalUI(Console(file=stream, color_system=None, highlight=False, width=100))
 
     terminal.candidates((displayed,))
 
@@ -1019,9 +1026,7 @@ def test_terminal_review_displays_candidate_evidence() -> None:
 
 def test_terminal_action_review_distinguishes_execution_approval() -> None:
     stream = StringIO()
-    terminal = TerminalUI(
-        Console(file=stream, color_system=None, highlight=False, width=100)
-    )
+    terminal = TerminalUI(Console(file=stream, color_system=None, highlight=False, width=100))
 
     content = "print('approved')\n"
     action_card = candidate().model_copy(
@@ -1036,9 +1041,7 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
                     "approval and passed on stdin; no local payload file exists."
                 ),
                 side_effects=(
-                    "Create gs://scenario-target/actions/approval_"
-                    + "1" * 32
-                    + ".json",
+                    "Create gs://scenario-target/actions/approval_" + "1" * 32 + ".json",
                 ),
                 tool_source="action.py",
                 tool_installation=(
@@ -1046,10 +1049,7 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
                 ),
                 artifact=ActionArtifact(
                     content=content,
-                    digest=(
-                        "sha256:"
-                        + hashlib.sha256(content.encode("utf-8")).hexdigest()
-                    ),
+                    digest=("sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()),
                     source_model="fixture-model",
                     rationale="Fixture action.",
                     written=True,
@@ -1087,9 +1087,7 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
 
 def test_terminal_file_review_shows_complete_unwritten_source() -> None:
     stream = StringIO()
-    terminal = TerminalUI(
-        Console(file=stream, color_system=None, highlight=False, width=100)
-    )
+    terminal = TerminalUI(Console(file=stream, color_system=None, highlight=False, width=100))
     content = "print('complete model-authored file')\n"
     artifact = ActionArtifact(
         content=content,
@@ -1124,9 +1122,7 @@ def test_terminal_file_review_shows_complete_unwritten_source() -> None:
 
 def test_terminal_renders_approved_command_output() -> None:
     stream = StringIO()
-    terminal = TerminalUI(
-        Console(file=stream, color_system=None, highlight=False, width=100)
-    )
+    terminal = TerminalUI(Console(file=stream, color_system=None, highlight=False, width=100))
     observation = ExecutionObservation(
         execution_id="gcp-approval",
         engagement_id="engagement",
@@ -1134,20 +1130,14 @@ def test_terminal_renders_approved_command_output() -> None:
         identity="identity",
         target="projects/project/buckets/scenario-target",
         success=True,
-        api_response_summary=(
-            "created gs://scenario-target/actions/approval.json"
-        ),
-        command_stdout=(
-            '{"bucket":"scenario-target","name":"actions/approval.json"}\n'
-        ),
+        api_response_summary=("created gs://scenario-target/actions/approval.json"),
+        command_stdout=('{"bucket":"scenario-target","name":"actions/approval.json"}\n'),
         explanation="The upload command created the approved object.",
         next_steps=(
             "Retrieve and inspect the created object.",
             "Run env show to inspect environment state.",
         ),
-        discovered_resources=(
-            "gs://scenario-target/actions/approval.json",
-        ),
+        discovered_resources=("gs://scenario-target/actions/approval.json",),
     )
 
     command = ActionCommand(
@@ -1160,9 +1150,7 @@ def test_terminal_renders_approved_command_output() -> None:
         observation,
         command=command,
         state_version="sha256:state",
-        completion_evidence=(
-            "FLAG{gcs-action-delivery:approval_" + "1" * 32 + "}"
-        ),
+        completion_evidence=("FLAG{gcs-action-delivery:approval_" + "1" * 32 + "}"),
     )
 
     rendered = stream.getvalue()
@@ -1182,9 +1170,7 @@ def test_terminal_renders_approved_command_output() -> None:
 
 def test_terminal_renders_model_source_input_and_model_turn() -> None:
     stream = StringIO()
-    terminal = TerminalUI(
-        Console(file=stream, color_system=None, highlight=False, width=100)
-    )
+    terminal = TerminalUI(Console(file=stream, color_system=None, highlight=False, width=100))
 
     terminal.command_source(
         reference="action.py",

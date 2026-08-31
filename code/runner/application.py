@@ -10,7 +10,8 @@ from typing import Protocol
 
 from dotenv import load_dotenv
 
-from action_agent.service import ActionAgentService
+from action_agent.harness import HarnessActionAgent
+from copilot.deepseek import DeepSeekCopilotHarness
 from core.config import Paths
 from core.errors import NotFoundError
 from core.ids import new_id
@@ -210,17 +211,16 @@ def read_connected_environment(
     completed_actions: tuple[str, ...] = ()
     if connection.engagement_id is not None:
         try:
-            environment = EnvironmentRepository(
-                paths.runtime / "environment"
-            ).current(connection.engagement_id)
+            environment = EnvironmentRepository(paths.runtime / "environment").current(
+                connection.engagement_id
+            )
             matrix = SnapshotRepository(paths.artifacts / "snapshots").get(
                 environment.matrix_version
             )
             vectors = tuple(
                 vector
                 for vector in environment.identities.values()
-                if vector.identity == connection.principal
-                and vector.scope == scenario.target_scope
+                if vector.identity == connection.principal and vector.scope == scenario.target_scope
             )
             if len(vectors) != 1:
                 raise PlannerConfigurationError(
@@ -233,9 +233,11 @@ def read_connected_environment(
             discovered_resources = environment.discovered_resources
             capabilities = environment.capabilities
             completed_actions = environment.completed_actions
-            engagement_status = GreenAgentRepository(
-                paths.runtime / "green-agent"
-            ).get(connection.engagement_id).status.value
+            engagement_status = (
+                GreenAgentRepository(paths.runtime / "green-agent")
+                .get(connection.engagement_id)
+                .status.value
+            )
         except NotFoundError:
             pass
     return ConnectedEnvironment(
@@ -300,6 +302,12 @@ def run_planner(request: PlannerRunRequest) -> int:
         raise PlannerConfigurationError(
             "GEMINI_API_KEY is empty; add it to code/.env before running"
         )
+    copilot_api_key = os.getenv(scenario.copilot.api_key_env, "").strip()
+    if not copilot_api_key:
+        raise PlannerConfigurationError(
+            f"{scenario.copilot.api_key_env} is empty; configure the DeepSeek "
+            "Harness model credential before running"
+        )
 
     paths = Paths()
     connection = _require_sandbox_connection(
@@ -314,14 +322,14 @@ def run_planner(request: PlannerRunRequest) -> int:
     trace = DebugTrace(
         trace_path,
         run_id,
-        secrets=(api_key,),
+        secrets=(api_key, copilot_api_key),
         echo=not request.quiet_trace,
         progress_path=progress_path,
     )
     conversation_trace = DebugTrace(
         conversation_path,
         run_id,
-        secrets=(api_key,),
+        secrets=(api_key, copilot_api_key),
         echo=False,
     )
     conversation_trace.emit(
@@ -340,6 +348,7 @@ def run_planner(request: PlannerRunRequest) -> int:
         trace_path=str(trace_path),
     )
 
+    copilot_harness: DeepSeekCopilotHarness | None = None
     try:
         snapshots = SnapshotRepository(paths.artifacts / "snapshots")
         matrix = _ensure_snapshot(
@@ -380,7 +389,23 @@ def run_planner(request: PlannerRunRequest) -> int:
             provider="capsule",
             enabled=True,
         )
-        action_assistant = ActionAgentService(gemini)
+        copilot_root = paths.runtime / "copilot" / run_id
+        copilot_harness = DeepSeekCopilotHarness(
+            api_key=copilot_api_key,
+            model=(scenario.copilot.model or scenario.model.name or "gemini-3.6-flash"),
+            workspace_root=copilot_root / "workspace",
+            session_root=copilot_root / "sessions",
+            base_url=scenario.copilot.base_url,
+            timeout_seconds=scenario.copilot.timeout_seconds,
+            trace=trace,
+        )
+        copilot_harness.require_ready()
+        action_assistant = HarnessActionAgent(
+            copilot_harness,
+            copilot_root / "workspace",
+            maximum_repairs=scenario.copilot.maximum_repairs,
+            trace=trace,
+        )
         planner = GreenAgent(
             snapshots=snapshots,
             proposer=proposer,
@@ -400,12 +425,8 @@ def run_planner(request: PlannerRunRequest) -> int:
                 state_source=f"scenario:{scenario.name}",
             )
         )
-        SandboxConnectionRepository(
-            paths.runtime / "sandbox" / "connection"
-        ).put(
-            connection.model_copy(
-                update={"engagement_id": engagement.engagement_id}
-            )
+        SandboxConnectionRepository(paths.runtime / "sandbox" / "connection").put(
+            connection.model_copy(update={"engagement_id": engagement.engagement_id})
         )
         trace.emit(
             "runner",
@@ -448,6 +469,9 @@ def run_planner(request: PlannerRunRequest) -> int:
         raise PlannerRunError(
             f"planner run failed; inspect the debug trace at {trace_path}"
         ) from error
+    finally:
+        if copilot_harness is not None:
+            copilot_harness.close()
 
 
 def _corpus_status(snapshot: MatrixSnapshot) -> CorpusStatus:
@@ -467,9 +491,7 @@ def _connected_scenario(
         paths.runtime / "sandbox" / "connection"
     ).optional_active()
     if connection is None:
-        raise PlannerConfigurationError(
-            "sandbox is not connected; run sandbox connect first"
-        )
+        raise PlannerConfigurationError("sandbox is not connected; run sandbox connect first")
     if connection.scenario_path is None:
         raise PlannerConfigurationError(
             "active connection has no bound scenario; reconnect the sandbox"
@@ -642,9 +664,7 @@ def _operator_loop(
                     continue
                 artifact = command.artifact
                 if artifact is None:
-                    terminal.invalid_choice(
-                        "the displayed action has no model-authored source"
-                    )
+                    terminal.invalid_choice("the displayed action has no model-authored source")
                     continue
                 terminal.command_source(
                     reference=artifact.workspace_path or artifact.path,
@@ -663,9 +683,7 @@ def _operator_loop(
                     )
                     continue
                 if not result.candidates:
-                    terminal.invalid_choice(
-                        "no pending action is available for model interaction"
-                    )
+                    terminal.invalid_choice("no pending action is available for model interaction")
                     continue
                 card = result.candidates[0]
                 try:
@@ -687,9 +705,7 @@ def _operator_loop(
         }:
             feedback = terminal.feedback_prompt()
             while not feedback:
-                terminal.invalid_choice(
-                    "feedback is required to guide the next proposal"
-                )
+                terminal.invalid_choice("feedback is required to guide the next proposal")
                 feedback = terminal.feedback_prompt()
             choice = TerminalChoice(
                 decision=choice.decision,

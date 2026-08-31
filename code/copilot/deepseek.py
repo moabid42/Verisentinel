@@ -106,6 +106,10 @@ class DeepSeekCopilotHarness:
         """Validate the optional dependency and start its isolated runtime."""
         if not self._api_key:
             raise DeepSeekHarnessUnavailable("the copilot API key is empty")
+        if any(not 33 <= ord(character) <= 126 for character in self._api_key):
+            raise DeepSeekHarnessUnavailable(
+                "the copilot API key must contain printable non-space ASCII only"
+            )
         version = self._installed_version or self._package_version()
         if version != DEEPSEEK_HARNESS_VERSION:
             raise DeepSeekHarnessUnavailable(

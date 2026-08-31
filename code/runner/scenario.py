@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 from typing import Literal
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import Field, ValidationError, field_validator
@@ -14,12 +15,11 @@ class ScenarioError(ValueError):
     """A scenario is missing or invalid without exposing its secret values."""
 
 
-_SERVICE_ACCOUNT_PATTERN = re.compile(
-    r"^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$"
-)
+_SERVICE_ACCOUNT_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$")
 _PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 _BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$")
 _TERRAFORM_ROOT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
+_ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 
 
 class InfrastructureTarget(ImmutableModel):
@@ -137,12 +137,35 @@ class CompletionSettings(ImmutableModel):
             or not value.startswith("FLAG{")
             or not value.endswith("}")
         ):
-            raise ValueError(
-                "flag_template must be a FLAG value containing one {approval_id}"
-            )
+            raise ValueError("flag_template must be a FLAG value containing one {approval_id}")
         if "{" in value.removeprefix("FLAG{").replace("{approval_id}", ""):
             raise ValueError("flag_template contains an unsupported placeholder")
         return value
+
+
+class CopilotSettings(ImmutableModel):
+    """Pinned coding-harness route used after technique selection."""
+
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    api_key_env: str = "GEMINI_API_KEY"
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    timeout_seconds: float = Field(default=300.0, gt=0, le=600)
+    maximum_repairs: int = Field(default=3, ge=1, le=10)
+
+    @field_validator("api_key_env")
+    @classmethod
+    def api_key_environment_is_safe(cls, value: str) -> str:
+        if _ENVIRONMENT_NAME_PATTERN.fullmatch(value) is None:
+            raise ValueError("api_key_env must be an uppercase environment name")
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def base_url_is_https(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.username:
+            raise ValueError("base_url must be an HTTPS endpoint without credentials")
+        return value.rstrip("/") + "/"
 
 
 class PlannerScenario(ImmutableModel):
@@ -154,6 +177,7 @@ class PlannerScenario(ImmutableModel):
     starting_service_account: StartingServiceAccount
     detections: DetectionProfile = Field(default_factory=DetectionProfile)
     model: ModelSettings = Field(default_factory=ModelSettings)
+    copilot: CopilotSettings = Field(default_factory=CopilotSettings)
     completion: CompletionSettings = Field(default_factory=CompletionSettings)
 
     @field_validator("target_scope")

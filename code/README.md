@@ -418,9 +418,9 @@ Gemini ranks typed IAMouflage techniques. The Green Agent validates every propos
 three admissible candidates. The terminal launchpad accepts only explicit input:
 
 ```text
-1-3       select a technique, or approve and run a displayed command
+1-3       select a technique, approve a displayed file write, or approve a command
 r1-r3     reject that displayed candidate
-s1-s3     display the complete source of a registered command tool
+s1-s3     display the complete model-authored action source
 i1-i3     display the exact non-secret input for a pending command
 text      ask or instruct Gemini without authorizing execution
 a         request alternatives
@@ -428,18 +428,18 @@ x         reject all
 q         terminate without execution
 ```
 
-Technique selection does not authorize execution. The subsequent command review states that no
-side effect has occurred and shows the exact command, in-memory input provenance, and resources it
-will change. Command approval then triggers fresh validation, a one-time approval record, one
-guarded capsule delivery, and a new environment-state version. Rejecting or terminating never
-calls the provider. Empty or malformed input never defaults to approval.
+Technique selection does not authorize a write or execution. Gemini next proposes one complete
+`action.py` file in memory. The file review shows its entire content and digest; approving it writes
+that exact file under `runtime/action-agent/` but runs nothing. A separate command review then shows
+`/usr/local/bin/python /workspace/action.py`, the exact input, and expected remote side effects.
+Command approval triggers fresh validation, binds the file digest into a one-time approval, mounts
+the file read-only in the restricted capsule, executes it without a shell, validates the result,
+and records a new environment-state version. Rejecting or terminating never calls the provider.
+Empty or malformed input never defaults to approval.
 
-Executable paths shown under `/opt/verisentinel/` are inside the immutable
-runtime image. They are not files created by Gemini. For example,
-`/opt/verisentinel/gcs_upload.py` is copied from
-`execution/gateway/gcs_upload.py` by `execution/gateway/Dockerfile` during
-`sandbox build`; the action review exposes this provenance and lets the
-operator inspect the exact source before approval.
+The gateway image contains only harness infrastructure; it no longer bundles a solution-specific
+`gcs_upload.py`. The reviewed model-authored file performs the action through the fixed private
+gateway endpoint, while the gateway enforces the configured principal and target.
 
 ## Debug and model-conversation logs
 

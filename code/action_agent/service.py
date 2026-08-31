@@ -19,9 +19,10 @@ from core.models import (
 
 ACTION_QUESTION_INSTRUCTION = """You are explaining one pending, validated action to its
 operator. Answer the operator's question directly and concisely using only the supplied action
-metadata. Clearly distinguish a preinstalled tool from a file generated during this run. You may
-recommend inspection, rejection, or approval, but you cannot modify files, approve the action, or
-execute it. Never imply that a side effect already happened when current_state says it did not."""
+metadata. Clearly distinguish the model-authored action file from preinstalled harness
+infrastructure and state whether the file has been written. You may recommend inspection,
+rejection, or approval, but you cannot modify files, approve the action, or execute it. Never imply
+that a side effect already happened when current_state says it did not."""
 
 ACTION_AUTHOR_INSTRUCTION = """You are the implementation agent inside a human-gated security
 evaluation harness. Author exactly one complete Python file named action.py for the already

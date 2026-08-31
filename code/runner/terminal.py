@@ -806,8 +806,8 @@ class TerminalUI:
         details = Table.grid(padding=(0, 2))
         details.add_column(style="label", no_wrap=True)
         details.add_column(overflow="fold")
-        details.add_row("Repository", reference)
-        details.add_row("Installed by", installation)
+        details.add_row("Path", reference)
+        details.add_row("Provenance", installation)
         details.add_row("SHA-256", digest)
         self.console.print(
             Panel(
@@ -816,7 +816,7 @@ class TerminalUI:
                     Text(""),
                     Syntax(content, "python", line_numbers=True, word_wrap=True),
                 ),
-                title="[accent]REGISTERED TOOL SOURCE[/accent]",
+                title="[accent]MODEL-AUTHORED ACTION SOURCE[/accent]",
                 title_align="left",
                 border_style="cyan",
                 padding=(1, 1),

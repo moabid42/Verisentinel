@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import traceback
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -106,6 +107,9 @@ def execution_fixture(
     snapshots = SnapshotRepository(tmp_path / "snapshots")
     matrix = IngestorService(paths=Paths(), repository=snapshots).build()
     technique = next(iter(matrix.techniques.values()))
+    artifact_path = tmp_path / "action.py"
+    artifact_path.write_text("print('approved')\n", encoding="utf-8")
+    artifact_digest = "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
     request = ExecutionRequest(
         engagement_id="engagement",
         candidate_id="candidate",
@@ -117,6 +121,8 @@ def execution_fixture(
         state_version="state",
         matrix_version=matrix.matrix_version,
         credential_ref="run/default",
+        artifact_digest=artifact_digest,
+        artifact_path=str(artifact_path),
     )
     approval = ApprovalRecord(
         approval_id=request.approval_id,
@@ -131,6 +137,8 @@ def execution_fixture(
         matrix_version=request.matrix_version,
         operator="operator@example.test",
         credential_ref=request.credential_ref,
+        artifact_digest=request.artifact_digest,
+        artifact_path=request.artifact_path,
     )
     service = ExecutionService(
         repository=ExecutionRepository(tmp_path / "execution"),
@@ -207,6 +215,19 @@ def test_changing_approved_argument_digest_invalidates_execution(tmp_path: Path)
 
     with pytest.raises(AuthorizationError, match="arguments"):
         service.execute(changed_request)
+    assert service.repository.attempts.list_keys() == ()
+    assert not provider.specs
+
+
+def test_changing_approved_artifact_invalidates_execution(tmp_path: Path) -> None:
+    provider = RecordingProvider()
+    service, request = execution_fixture(tmp_path, provider=provider)
+    changed = request.model_copy(
+        update={"artifact_digest": "sha256:" + "f" * 64}
+    )
+
+    with pytest.raises(AuthorizationError, match="artifact_digest"):
+        service.execute(changed)
     assert service.repository.attempts.list_keys() == ()
     assert not provider.specs
 

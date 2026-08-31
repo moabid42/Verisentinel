@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 from pathlib import Path
-from types import TracebackType
-from urllib.error import URLError
 
 import pytest
 
@@ -13,27 +13,8 @@ from core.models import ActionDefinition, ExecutionSpec, TechniqueActionParamete
 from execution.capsule import entrypoint
 
 ACCESS_TOKEN = "synthetic-capsule-access-token"
-
-
-class StaticResponse:
-    """Bounded context-managed endpoint response."""
-
-    def __init__(self, document: object) -> None:
-        self.encoded = json.dumps(document).encode("utf-8")
-
-    def __enter__(self) -> StaticResponse:
-        return self
-
-    def __exit__(
-        self,
-        error_type: type[BaseException] | None,
-        error: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        del error_type, error, traceback
-
-    def read(self, maximum: int) -> bytes:
-        return self.encoded[:maximum]
+ACTION_SOURCE = "print('model-authored action')\n"
+ACTION_DIGEST = "sha256:" + hashlib.sha256(ACTION_SOURCE.encode("utf-8")).hexdigest()
 
 
 def execution_spec() -> ExecutionSpec:
@@ -55,6 +36,8 @@ def execution_spec() -> ExecutionSpec:
         state_version="state",
         matrix_version="matrix",
         credential_ref="run/default",
+        artifact_digest=ACTION_DIGEST,
+        artifact_path="/workspace/action.py",
     )
 
 
@@ -99,30 +82,37 @@ def test_entrypoint_rejects_unregistered_or_untyped_input(
         entrypoint.load_spec(path)
 
 
-def test_endpoint_request_keeps_credential_out_of_payload() -> None:
+def test_entrypoint_runs_exact_digest_bound_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     observation = {"execution_id": "execution"}
     captured: dict[str, object] = {}
+    path = tmp_path / "action.py"
+    path.write_text(ACTION_SOURCE, encoding="utf-8")
 
-    def open_request(request, *, timeout: float) -> StaticResponse:
-        captured["url"] = request.full_url
-        captured["authorization"] = request.get_header("Authorization")
-        captured["payload"] = request.data
-        captured["timeout"] = timeout
-        return StaticResponse(observation)
+    def run(arguments, **kwargs):
+        captured["arguments"] = arguments
+        captured["options"] = kwargs
+        return subprocess.CompletedProcess(
+            arguments,
+            returncode=0,
+            stdout=json.dumps(observation).encode("utf-8"),
+            stderr=b"",
+        )
 
-    result = entrypoint.invoke_endpoint(
+    monkeypatch.setattr(entrypoint.subprocess, "run", run)
+    result = entrypoint.invoke_artifact(
         execution_spec().model_dump(mode="json"),
-        ACCESS_TOKEN,
-        opener=open_request,
+        path=path,
     )
 
     assert result == observation
-    assert captured["url"] == entrypoint.ENDPOINT_URL
-    assert captured["authorization"] == f"Bearer {ACCESS_TOKEN}"
-    assert ACCESS_TOKEN.encode() not in captured["payload"]
-    payload = json.loads(captured["payload"])
-    assert "command" not in payload
-    assert "credential_ref" not in payload
+    assert captured["arguments"] == (entrypoint.sys.executable, str(path))
+    options = captured["options"]
+    assert options["capture_output"] is True
+    assert options["check"] is False
+    assert options["timeout"] == 30.0
 
 
 def test_entrypoint_failure_is_bounded_and_redacted(
@@ -132,22 +122,29 @@ def test_entrypoint_failure_is_bounded_and_redacted(
 ) -> None:
     spec_path = tmp_path / "spec.json"
     credential_path = tmp_path / "credential"
-    spec_path.write_text(execution_spec().model_dump_json(), encoding="utf-8")
     credential_path.write_text(ACCESS_TOKEN, encoding="utf-8")
 
-    def fail(request, *, timeout: float):
-        del request, timeout
-        raise URLError(f"failed with {ACCESS_TOKEN}")
+    artifact_path = tmp_path / "action.py"
+    artifact_path.write_text(ACTION_SOURCE, encoding="utf-8")
+    spec = execution_spec().model_copy(
+        update={"artifact_path": str(artifact_path)}
+    )
+    spec_path.write_text(spec.model_dump_json(), encoding="utf-8")
+
+    def fail(arguments, **kwargs):
+        del arguments, kwargs
+        raise subprocess.SubprocessError(f"failed with {ACCESS_TOKEN}")
 
     monkeypatch.setattr(entrypoint, "SPEC_PATH", spec_path)
     monkeypatch.setattr(entrypoint, "CREDENTIAL_PATH", credential_path)
-    monkeypatch.setattr(entrypoint, "urlopen", fail)
+    monkeypatch.setattr(entrypoint, "ARTIFACT_PATH", artifact_path)
+    monkeypatch.setattr(entrypoint.subprocess, "run", fail)
 
     result = entrypoint.main()
 
     assert result == 1
     captured = capsys.readouterr()
-    assert captured.err == "capsule_error:endpoint_failed\n"
+    assert captured.err == "capsule_error:artifact_failed\n"
     assert ACCESS_TOKEN not in captured.err
 
 

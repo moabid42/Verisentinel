@@ -61,6 +61,8 @@ class ActionRegistry:
             state_version=request.state_version,
             matrix_version=request.matrix_version,
             credential_ref=request.credential_ref,
+            artifact_digest=request.artifact_digest,
+            artifact_path=request.artifact_path,
         )
         return ResolvedAction(
             matrix=matrix,

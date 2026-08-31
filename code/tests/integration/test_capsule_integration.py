@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -44,6 +45,37 @@ BASE_IMAGE = (
 ACCESS_TOKEN = "synthetic-capsule-integration-token"
 PRINCIPAL = "operator@example.test"
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+ACTION_SOURCE = '''import json
+import sys
+from pathlib import Path
+from urllib.request import Request, urlopen
+
+spec = json.loads(Path("/run/verisentinel/spec.json").read_text(encoding="utf-8"))
+credential = Path("/run/verisentinel/credential").read_text(encoding="utf-8").strip()
+action = spec["action"]
+payload = {
+    "action_id": action["action_id"],
+    "approval_id": spec["approval_id"],
+    "engagement_id": spec["engagement_id"],
+    "expected_capabilities": action["expected_capabilities"],
+    "identity": spec["identity"],
+    "observed_permission_footprint": action["observed_permission_footprint"],
+    "operation": action["provider_operation"],
+    "parameters": spec["arguments"],
+    "target": spec["target"],
+}
+request = Request(
+    "http://verisentinel-mock:8080/execute",
+    data=json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    headers={
+        "Authorization": f"Bearer {credential}",
+        "Content-Type": "application/json",
+    },
+    method="POST",
+)
+with urlopen(request, timeout=spec["timeout_seconds"]) as response:
+    sys.stdout.buffer.write(response.read(spec["output_limit_bytes"] + 1))
+'''
 
 
 class StaticTokenInspector:
@@ -325,6 +357,11 @@ def _execution_service(
     snapshots = SnapshotRepository(tmp_path / "snapshots")
     matrix = IngestorService(paths=Paths(), repository=snapshots).build()
     technique = next(iter(matrix.techniques.values()))
+    artifact_path = tmp_path / "model-authored-action.py"
+    artifact_path.write_text(ACTION_SOURCE, encoding="utf-8")
+    artifact_digest = "sha256:" + hashlib.sha256(
+        artifact_path.read_bytes()
+    ).hexdigest()
     request = ExecutionRequest(
         engagement_id="engagement",
         candidate_id="candidate",
@@ -336,6 +373,8 @@ def _execution_service(
         state_version="state",
         matrix_version=matrix.matrix_version,
         credential_ref="run/default",
+        artifact_digest=artifact_digest,
+        artifact_path=str(artifact_path),
     )
     approval = ApprovalRecord(
         approval_id=request.approval_id,
@@ -350,6 +389,8 @@ def _execution_service(
         matrix_version=request.matrix_version,
         operator="operator@example.test",
         credential_ref=request.credential_ref,
+        artifact_digest=request.artifact_digest,
+        artifact_path=request.artifact_path,
     )
     resolver = CredentialResolver(
         environ={"CAPSULE_TOKEN": ACCESS_TOKEN},

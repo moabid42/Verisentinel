@@ -1,5 +1,4 @@
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -28,6 +27,22 @@ class ScriptedRuntime:
         del timeout_seconds, output_limit_bytes
         self.calls.append(arguments)
         return self.results.pop(0)
+
+
+class StaticResponse:
+    """Return one bounded fake GCS API response."""
+
+    def __init__(self, encoded: bytes) -> None:
+        self.encoded = encoded
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, error_type, error, traceback) -> None:
+        del error_type, error, traceback
+
+    def read(self, maximum: int) -> bytes:
+        return self.encoded[:maximum]
 
 
 def output(return_code: int = 0, stdout: bytes = b"") -> ProcessOutput:
@@ -63,6 +78,14 @@ def test_gateway_builder_activates_immutable_digest(tmp_path: Path) -> None:
         "--pull=false",
         "--provenance=false",
     )
+
+
+def test_gateway_image_contains_no_solution_specific_upload_script() -> None:
+    directory = Path(__file__).parents[2] / "execution" / "gateway"
+    dockerfile = (directory / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "gcs_upload.py" not in dockerfile
+    assert not (directory / "gcs_upload.py").exists()
 
 
 def test_gateway_manager_joins_bridge_and_internal_network(tmp_path: Path) -> None:
@@ -193,23 +216,18 @@ def test_gateway_configuration_rejects_unexpected_fields(tmp_path: Path) -> None
         load_configuration(path)
 
 
-def test_gateway_runs_exact_previewed_command_without_credential_arguments(
+def test_gateway_delivers_typed_request_without_a_bundled_script(
     monkeypatch,
 ) -> None:
     approval_id = "approval_" + "1" * 32
     command_stdout = b'{"bucket":"scenario-target","name":"action.json"}\n'
-    calls: list[tuple[tuple[str, ...], dict]] = []
+    calls: list[tuple[object, float]] = []
 
-    def run(arguments: tuple[str, ...], **kwargs) -> subprocess.CompletedProcess:
-        calls.append((arguments, kwargs))
-        return subprocess.CompletedProcess(
-            arguments,
-            returncode=0,
-            stdout=command_stdout,
-            stderr=b"",
-        )
+    def open_request(request, *, timeout: float) -> StaticResponse:
+        calls.append((request, timeout))
+        return StaticResponse(command_stdout)
 
-    monkeypatch.setattr(gateway_entrypoint.subprocess, "run", run)
+    monkeypatch.setattr(gateway_entrypoint, "urlopen", open_request)
     handler = object.__new__(Handler)
     handler.configuration = {
         "infrastructure_path": "projects/project/buckets/scenario-target",
@@ -225,18 +243,13 @@ def test_gateway_runs_exact_previewed_command_without_credential_arguments(
         f"gs://scenario-target/actions/{approval_id}.json"
     )
     assert stdout == command_stdout.decode()
-    arguments, options = calls[0]
-    assert arguments == (
-        "/usr/local/bin/python",
-        "/opt/verisentinel/gcs_upload.py",
-        "--bucket",
-        "scenario-target",
-        "--object",
-        f"actions/{approval_id}.json",
+    request, timeout = calls[0]
+    assert request.full_url.startswith(
+        "https://storage.googleapis.com/upload/storage/v1/b/scenario-target/o?"
     )
-    assert "synthetic" not in " ".join(arguments)
-    command_input = json.loads(options["input"])
-    assert command_input["authorization"] == "Bearer synthetic"
-    assert command_input["document"]["approval_id"] == approval_id
-    assert options["capture_output"] is True
-    assert options["check"] is False
+    assert "uploadType=media" in request.full_url
+    assert f"actions%2F{approval_id}.json" in request.full_url
+    assert request.get_header("Authorization") == "Bearer synthetic"
+    assert json.loads(request.data)["approval_id"] == approval_id
+    assert b"synthetic" not in request.data
+    assert timeout == 25.0

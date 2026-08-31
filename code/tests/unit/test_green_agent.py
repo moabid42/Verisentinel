@@ -257,9 +257,14 @@ def test_technique_selection_precedes_approved_action_execution(
     assert completed.execution_observation.success
     assert completed.executed_command == command_cycle.candidates[0].action_command
     execution_id = execution.repository.executions.list_keys()[0]
-    assert execution.repository.get(execution_id).approval.approval_id == (
+    record = execution.repository.get(execution_id)
+    assert record.approval.approval_id == (
         command_cycle.candidates[0].action_command.approval_id
     )
+    assert record.approval.artifact_digest == command.artifact.digest
+    assert record.request.artifact_path == command.artifact.workspace_path
+    assert record.spec is not None
+    assert record.spec.artifact_digest == command.artifact.digest
     assert completed.resulting_state_version == green.environment.current(
         engagement.engagement_id
     ).state_version

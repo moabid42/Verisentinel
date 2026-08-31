@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -32,6 +33,8 @@ IMAGE = (
     "verisentinel-capsule@sha256:"
     "d4670ddecec6eb9df14b990c03aa258dece2078f8114401c7f2086e4c4089ffe"
 )
+ACTION_SOURCE = "print('approved action')\n"
+ACTION_DIGEST = "sha256:" + hashlib.sha256(ACTION_SOURCE.encode("utf-8")).hexdigest()
 
 
 class RecordingRuntime:
@@ -45,6 +48,7 @@ class RecordingRuntime:
         self.container_name = ""
         self.spec_path: Path | None = None
         self.credential_path: Path | None = None
+        self.artifact_path: Path | None = None
         self.cleanup_timeout = 0.0
 
     def run_container(
@@ -66,10 +70,15 @@ class RecordingRuntime:
         ]
         self.spec_path = _mount_source(mounts[0])
         self.credential_path = _mount_source(mounts[1])
+        self.artifact_path = _mount_source(mounts[2])
         assert self.spec_path.stat().st_mode & 0o777 == 0o400
         assert self.credential_path.stat().st_mode & 0o777 == 0o400
         assert self.credential_path.read_text(encoding="utf-8") == ACCESS_TOKEN
         assert ACCESS_TOKEN not in self.spec_path.read_text(encoding="utf-8")
+        mounted_spec = ExecutionSpec.model_validate_json(
+            self.spec_path.read_text(encoding="utf-8")
+        )
+        assert mounted_spec.artifact_path == "/workspace/action.py"
         if self.run_error is not None:
             raise self.run_error
         return self.result
@@ -86,7 +95,11 @@ class RecordingRuntime:
             raise self.cleanup_error
 
 
-def execution_spec() -> ExecutionSpec:
+def execution_spec(artifact_root: Path | None = None) -> ExecutionSpec:
+    artifact_path = Path("/tmp/fixture-action.py")
+    if artifact_root is not None:
+        artifact_path = artifact_root / "approved-action.py"
+        artifact_path.write_text(ACTION_SOURCE, encoding="utf-8")
     return ExecutionSpec(
         engagement_id="engagement",
         candidate_id="candidate",
@@ -104,6 +117,8 @@ def execution_spec() -> ExecutionSpec:
         state_version="state",
         matrix_version="matrix",
         credential_ref="run/default",
+        artifact_digest=ACTION_DIGEST,
+        artifact_path=str(artifact_path),
         timeout_seconds=5.0,
         output_limit_bytes=4096,
     )
@@ -171,7 +186,7 @@ def test_provider_applies_all_isolation_and_resource_bounds(tmp_path: Path) -> N
     runtime = RecordingRuntime(process_output())
     capsule = provider(tmp_path, runtime)
 
-    result = capsule.execute(execution_spec(), lease())
+    result = capsule.execute(execution_spec(tmp_path), lease())
 
     assert result.execution_id == "execution"
     assert result.engagement_id == "engagement"
@@ -196,6 +211,7 @@ def test_provider_applies_all_isolation_and_resource_bounds(tmp_path: Path) -> N
     assert ACCESS_TOKEN not in rendered
     assert "GEMINI_API_KEY" not in rendered
     assert str(Path(__file__).parents[3]) not in rendered
+    assert "/workspace/action.py" in rendered
     assert runtime.cleanup_timeout == 10.0
     assert capsule.last_metrics is not None
     assert capsule.last_metrics.startup_latency_seconds == 0.05
@@ -207,13 +223,13 @@ def test_provider_removes_temporary_inputs_after_success(tmp_path: Path) -> None
     runtime = RecordingRuntime(process_output())
     capsule = provider(tmp_path, runtime)
 
-    capsule.execute(execution_spec(), lease())
+    capsule.execute(execution_spec(tmp_path), lease())
 
     assert runtime.spec_path is not None
     assert runtime.credential_path is not None
     assert not runtime.spec_path.exists()
     assert not runtime.credential_path.exists()
-    assert tuple(tmp_path.iterdir()) == ()
+    assert {path.name for path in tmp_path.iterdir()} == {"approved-action.py"}
 
 
 @pytest.mark.parametrize(
@@ -239,11 +255,11 @@ def test_provider_translates_runtime_bounds_and_cleans_up(
     capsule = provider(tmp_path, runtime)
 
     with pytest.raises(CapsuleExecutionError, match=message):
-        capsule.execute(execution_spec(), lease())
+        capsule.execute(execution_spec(tmp_path), lease())
 
     assert runtime.spec_path is not None
     assert not runtime.spec_path.exists()
-    assert tuple(tmp_path.iterdir()) == ()
+    assert {path.name for path in tmp_path.iterdir()} == {"approved-action.py"}
 
 
 @pytest.mark.parametrize(
@@ -279,10 +295,10 @@ def test_provider_translates_process_failures_without_details(
     capsule = provider(tmp_path, runtime)
 
     with pytest.raises(CapsuleExecutionError, match=message) as raised:
-        capsule.execute(execution_spec(), lease())
+        capsule.execute(execution_spec(tmp_path), lease())
 
     assert "untrusted provider detail" not in str(raised.value)
-    assert tuple(tmp_path.iterdir()) == ()
+    assert {path.name for path in tmp_path.iterdir()} == {"approved-action.py"}
 
 
 def test_cleanup_failure_overrides_success_and_removes_host_files(
@@ -293,9 +309,9 @@ def test_cleanup_failure_overrides_success_and_removes_host_files(
     capsule = provider(tmp_path, runtime)
 
     with pytest.raises(CapsuleExecutionError, match="capsule cleanup failed"):
-        capsule.execute(execution_spec(), lease())
+        capsule.execute(execution_spec(tmp_path), lease())
 
-    assert tuple(tmp_path.iterdir()) == ()
+    assert {path.name for path in tmp_path.iterdir()} == {"approved-action.py"}
 
 
 def test_interruption_removes_temporary_inputs_before_propagating(
@@ -306,11 +322,11 @@ def test_interruption_removes_temporary_inputs_before_propagating(
     capsule = provider(tmp_path, runtime)
 
     with pytest.raises(KeyboardInterrupt):
-        capsule.execute(execution_spec(), lease())
+        capsule.execute(execution_spec(tmp_path), lease())
 
     assert runtime.spec_path is not None
     assert not runtime.spec_path.exists()
-    assert tuple(tmp_path.iterdir()) == ()
+    assert {path.name for path in tmp_path.iterdir()} == {"approved-action.py"}
 
 
 def test_configuration_rejects_unpinned_image_or_root_user() -> None:

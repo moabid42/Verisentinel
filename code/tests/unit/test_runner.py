@@ -1085,6 +1085,43 @@ def test_terminal_action_review_distinguishes_execution_approval() -> None:
     assert "Validation" not in rendered
 
 
+def test_terminal_file_review_shows_complete_unwritten_source() -> None:
+    stream = StringIO()
+    terminal = TerminalUI(
+        Console(file=stream, color_system=None, highlight=False, width=100)
+    )
+    content = "print('complete model-authored file')\n"
+    artifact = ActionArtifact(
+        content=content,
+        digest="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        source_model="gemini-fixture",
+        rationale="Create the bounded scenario object.",
+    )
+    action_card = candidate().model_copy(
+        update={
+            "action_command": ActionCommand(
+                action_id=candidate().proposal.action_id,
+                approval_id="approval_" + "1" * 32,
+                display="/usr/local/bin/python /workspace/action.py",
+                prepared_by="model",
+                artifact=artifact,
+            )
+        }
+    )
+
+    terminal.candidates(
+        (action_card,),
+        review_stage=ReviewStage.ACTION_ARTIFACT,
+    )
+
+    rendered = stream.getvalue()
+    assert "FILE CHANGE REVIEW" in rendered
+    assert "FILE-WRITE APPROVAL REQUIRED" in rendered
+    assert "Proposed in memory; not written and not executed" in rendered
+    assert "gemini-fixture" in rendered
+    assert "complete model-authored file" in rendered
+
+
 def test_terminal_renders_approved_command_output() -> None:
     stream = StringIO()
     terminal = TerminalUI(
@@ -1116,11 +1153,7 @@ def test_terminal_renders_approved_command_output() -> None:
     command = ActionCommand(
         action_id="technique:test",
         approval_id="approval_" + "1" * 32,
-        display=(
-            "/usr/local/bin/python /opt/verisentinel/gcs_upload.py "
-            "--bucket scenario-target --object "
-            f"actions/approval_{'1' * 32}.json"
-        ),
+        display="/usr/local/bin/python /workspace/action.py",
     )
 
     terminal.command_output(
@@ -1147,25 +1180,25 @@ def test_terminal_renders_approved_command_output() -> None:
     assert "<approval_id>" not in rendered
 
 
-def test_terminal_renders_registered_source_input_and_model_turn() -> None:
+def test_terminal_renders_model_source_input_and_model_turn() -> None:
     stream = StringIO()
     terminal = TerminalUI(
         Console(file=stream, color_system=None, highlight=False, width=100)
     )
 
     terminal.command_source(
-        reference="execution/gateway/gcs_upload.py",
-        installation="Copied into the gateway image during sandbox build.",
-        digest="a" * 64,
-        content='print("tool source")\n',
+        reference="action.py",
+        installation="Authored by Gemini and written after explicit approval.",
+        digest="sha256:" + "a" * 64,
+        content='print("model-authored source")\n',
     )
     terminal.command_input('{"approval_id":"approval_123"}')
-    terminal.agent_message("This is a preinstalled tool; nothing has executed.")
+    terminal.agent_message("This file was model-authored; nothing has executed.")
 
     rendered = stream.getvalue()
-    assert "REGISTERED TOOL SOURCE" in rendered
-    assert "execution/gateway/gcs_upload.py" in rendered
-    assert 'print("tool source")' in rendered
+    assert "MODEL-AUTHORED ACTION SOURCE" in rendered
+    assert "action.py" in rendered
+    assert 'print("model-authored source")' in rendered
     assert "PENDING COMMAND INPUT" in rendered
     assert '"approval_id":"approval_123"' in rendered
     assert "Credential material is injected only after approval" in rendered

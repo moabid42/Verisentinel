@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import secrets
@@ -31,6 +32,7 @@ _IMAGE_PATTERN = re.compile(r"^verisentinel-capsule@sha256:[0-9a-f]{64}$")
 _NETWORK_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 _SPEC_DESTINATION = "/run/verisentinel/spec.json"
 _CREDENTIAL_DESTINATION = "/run/verisentinel/credential"
+_ARTIFACT_DESTINATION = "/workspace/action.py"
 
 
 class CapsuleExecutionError(RuntimeError):
@@ -209,6 +211,10 @@ class CapsuleExecutionProvider:
             prepared.credential_path,
             _CREDENTIAL_DESTINATION,
         )
+        artifact_mount = _mount_argument(
+            prepared.artifact_path,
+            _ARTIFACT_DESTINATION,
+        )
         return (
             "run",
             "--name",
@@ -243,6 +249,8 @@ class CapsuleExecutionProvider:
             spec_mount,
             "--mount",
             credential_mount,
+            "--mount",
+            artifact_mount,
             self.configuration.image,
         )
 
@@ -289,6 +297,7 @@ class _PreparedInputs:
     directory: Path
     spec_path: Path
     credential_path: Path
+    artifact_path: Path
 
     @classmethod
     def create(
@@ -298,6 +307,7 @@ class _PreparedInputs:
         *,
         temporary_root: Path | None,
     ) -> _PreparedInputs:
+        artifact_path = _validated_artifact(spec)
         try:
             directory = Path(
                 tempfile.mkdtemp(
@@ -308,7 +318,10 @@ class _PreparedInputs:
             directory.chmod(0o700)
             spec_path = directory / "spec.json"
             credential_path = directory / "credential"
-            spec_path.write_text(spec.model_dump_json(), encoding="utf-8")
+            mounted_spec = spec.model_copy(
+                update={"artifact_path": _ARTIFACT_DESTINATION}
+            )
+            spec_path.write_text(mounted_spec.model_dump_json(), encoding="utf-8")
             credential_path.write_text(credential, encoding="utf-8")
             spec_path.chmod(0o400)
             credential_path.chmod(0o400)
@@ -320,6 +333,7 @@ class _PreparedInputs:
             directory=directory,
             spec_path=spec_path,
             credential_path=credential_path,
+            artifact_path=artifact_path,
         )
 
     def cleanup(self) -> None:
@@ -331,6 +345,23 @@ def _mount_argument(source: Path, destination: str) -> str:
     if "," in rendered:
         raise CapsuleExecutionError("capsule input path is unsupported")
     return f"type=bind,src={rendered},dst={destination},readonly"
+
+
+def _validated_artifact(spec: ExecutionSpec) -> Path:
+    """Return the exact approved artifact after path, size, and digest checks."""
+    if not spec.artifact_path or not spec.artifact_digest:
+        raise CapsuleExecutionError("capsule action artifact is unavailable")
+    path = Path(spec.artifact_path)
+    try:
+        encoded = path.read_bytes()
+    except OSError:
+        raise CapsuleExecutionError("capsule action artifact is unavailable") from None
+    if not encoded or len(encoded) > 65_536:
+        raise CapsuleExecutionError("capsule action artifact is invalid")
+    digest = "sha256:" + hashlib.sha256(encoded).hexdigest()
+    if digest != spec.artifact_digest:
+        raise CapsuleExecutionError("capsule action artifact digest does not match approval")
+    return path
 
 
 def _translated_process_error(stderr: bytes) -> str:

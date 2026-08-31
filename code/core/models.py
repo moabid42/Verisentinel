@@ -330,6 +330,11 @@ class ApprovalRecord(ImmutableModel):
     state_version: str
     matrix_version: str
     operator: str
+    artifact_digest: str = Field(
+        default="",
+        pattern=r"^(?:sha256:[0-9a-f]{64})?$",
+    )
+    artifact_path: str = Field(default="", max_length=1024)
     credential_ref: str = Field(
         default="",
         pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9._/-]{0,127})?$",
@@ -365,6 +370,11 @@ class ExecutionRequest(ImmutableModel):
     approval_id: str
     state_version: str
     matrix_version: str
+    artifact_digest: str = Field(
+        default="",
+        pattern=r"^(?:sha256:[0-9a-f]{64})?$",
+    )
+    artifact_path: str = Field(default="", max_length=1024)
     credential_ref: str = Field(
         default="",
         pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9._/-]{0,127})?$",
@@ -384,6 +394,11 @@ class ExecutionSpec(ImmutableModel):
     approval_id: str
     state_version: str
     matrix_version: str
+    artifact_digest: str = Field(
+        default="",
+        pattern=r"^(?:sha256:[0-9a-f]{64})?$",
+    )
+    artifact_path: str = Field(default="", max_length=1024)
     credential_ref: str = Field(
         min_length=1,
         max_length=128,

@@ -10,7 +10,6 @@ RUN groupadd --gid 65532 gateway \
     && install --directory --owner 65532 --group 65532 /run/verisentinel /opt/verisentinel
 
 COPY --chown=65532:65532 entrypoint.py /opt/verisentinel/entrypoint.py
-COPY --chown=65532:65532 gcs_upload.py /opt/verisentinel/gcs_upload.py
 
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/python", "/opt/verisentinel/entrypoint.py"]

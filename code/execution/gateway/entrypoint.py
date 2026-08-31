@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 CONFIGURATION_PATH = Path("/run/verisentinel/connection.json")
 MAXIMUM_REQUEST_BYTES = 65_536
 MAXIMUM_RESPONSE_BYTES = 65_536
-UPLOAD_COMMAND = (
-    "/usr/local/bin/python",
-    "/opt/verisentinel/gcs_upload.py",
-)
 _REQUEST_KEYS = {
     "action_id",
     "approval_id",
@@ -101,34 +99,38 @@ class Handler(BaseHTTPRequestHandler):
         name = f"actions/{document['approval_id']}.json"
         object_uri = f"gs://{bucket}/{name}"
         encoded_input = json.dumps(
-            {
-                "authorization": authorization,
-                "document": document,
-            },
+            document,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
+        endpoint = (
+            "https://storage.googleapis.com/upload/storage/v1/b/"
+            f"{quote(bucket, safe='')}/o?uploadType=media&name="
+            f"{quote(name, safe='')}"
+        )
+        request = Request(
+            endpoint,
+            data=encoded_input,
+            headers={
+                "Authorization": authorization,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
         try:
-            result = subprocess.run(
-                (*UPLOAD_COMMAND, "--bucket", bucket, "--object", name),
-                input=encoded_input,
-                capture_output=True,
-                check=False,
-                timeout=25.0,
-            )
-        except (OSError, subprocess.SubprocessError):
+            with urlopen(request, timeout=25.0) as response:
+                encoded_output = response.read(MAXIMUM_RESPONSE_BYTES + 1)
+        except (HTTPError, URLError, OSError, TimeoutError):
             raise GatewayError("delivery failed") from None
-        if (
-            result.returncode != 0
-            or result.stderr
-            or not result.stdout
-            or len(result.stdout) > MAXIMUM_RESPONSE_BYTES
-        ):
+        if not encoded_output or len(encoded_output) > MAXIMUM_RESPONSE_BYTES:
             raise GatewayError("delivery failed")
         try:
-            command_stdout = result.stdout.decode("utf-8")
-        except UnicodeDecodeError:
+            response_document = json.loads(encoded_output)
+            command_stdout = encoded_output.decode("utf-8")
+        except (UnicodeDecodeError, json.JSONDecodeError):
             raise GatewayError("delivery failed") from None
+        if not isinstance(response_document, dict):
+            raise GatewayError("delivery failed")
         return object_uri, command_stdout
 
     def _respond(
@@ -144,8 +146,8 @@ class Handler(BaseHTTPRequestHandler):
             "discovered_resources": [object_uri],
             "engagement_id": document["engagement_id"],
             "explanation": (
-                "The fixed upload command created the approved action envelope "
-                "with the connected service-account credential."
+                "The approved model-authored action requested creation of the "
+                "action envelope through the restricted infrastructure gateway."
             ),
             "execution_id": f"gcp-{document['approval_id']}",
             "gained_capabilities": [],

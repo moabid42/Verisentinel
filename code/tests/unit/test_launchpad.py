@@ -85,11 +85,7 @@ def test_launchpad_persists_typed_action_command_preview(tmp_path: Path) -> None
             "action_command": ActionCommand(
                 action_id="technique:technique",
                 approval_id="approval_" + "1" * 32,
-                display=(
-                    "/usr/local/bin/python /opt/verisentinel/gcs_upload.py "
-                    "--bucket scenario-target --object "
-                    f"actions/approval_{'1' * 32}.json"
-                ),
+                display="/usr/local/bin/python /workspace/action.py",
             )
         }
     )

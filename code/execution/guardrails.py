@@ -41,6 +41,8 @@ def verify_execution_authority(
         "state_version",
         "matrix_version",
         "credential_ref",
+        "artifact_digest",
+        "artifact_path",
     )
     changed = [
         field

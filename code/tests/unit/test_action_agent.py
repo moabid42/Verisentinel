@@ -16,10 +16,25 @@ from urllib.request import Request, urlopen
 
 spec = json.loads(Path("/run/verisentinel/spec.json").read_text(encoding="utf-8"))
 credential = Path("/run/verisentinel/credential").read_text(encoding="utf-8").strip()
+action = spec["action"]
+payload = {
+    "action_id": action["action_id"],
+    "approval_id": spec["approval_id"],
+    "engagement_id": spec["engagement_id"],
+    "expected_capabilities": action["expected_capabilities"],
+    "identity": spec["identity"],
+    "observed_permission_footprint": action["observed_permission_footprint"],
+    "operation": action["provider_operation"],
+    "parameters": spec["arguments"],
+    "target": spec["target"],
+}
 request = Request(
     "http://verisentinel-mock:8080/execute",
-    data=json.dumps(spec).encode("utf-8"),
-    headers={"Authorization": f"Bearer {credential}"},
+    data=json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    headers={
+        "Authorization": f"Bearer {credential}",
+        "Content-Type": "application/json",
+    },
     method="POST",
 )
 with urlopen(request, timeout=spec["timeout_seconds"]) as response:
@@ -52,7 +67,7 @@ def test_action_agent_answers_without_executing() -> None:
         return response
 
     response = SimpleNamespace(
-        text="It is a preinstalled gateway tool. No action has executed.",
+        text="Gemini proposed this file; no action has executed.",
         candidates=(),
         usage_metadata=None,
     )
@@ -65,7 +80,7 @@ def test_action_agent_answers_without_executing() -> None:
         action_id="technique:technique-id",
         approval_id="approval_" + "1" * 32,
         display="registered-command",
-        tool_source="execution/gateway/gcs_upload.py",
+        tool_source="action.py",
     )
     card = SimpleNamespace(
         action_command=command,
@@ -80,7 +95,7 @@ def test_action_agent_answers_without_executing() -> None:
         "Where did this file come from?",
     )
 
-    assert answer == "It is a preinstalled gateway tool. No action has executed."
+    assert answer == "Gemini proposed this file; no action has executed."
     config = requests[0]["config"]
     assert config.max_output_tokens == 4096
     assert config.thinking_config.include_thoughts is False

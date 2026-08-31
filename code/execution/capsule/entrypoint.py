@@ -1,17 +1,19 @@
-"""Fixed entrypoint for one typed operation inside the execution capsule."""
+"""Fixed launcher for one approved model-authored action artifact."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 SPEC_PATH = Path("/run/verisentinel/spec.json")
 CREDENTIAL_PATH = Path("/run/verisentinel/credential")
+ARTIFACT_PATH = Path("/workspace/action.py")
 ENDPOINT_URL = "http://verisentinel-mock:8080/execute"
 MAXIMUM_CREDENTIAL_BYTES = 16_384
 MAXIMUM_RESPONSE_BYTES = 1_048_576
@@ -27,6 +29,8 @@ _SPEC_KEYS = {
     "approval_id",
     "state_version",
     "matrix_version",
+    "artifact_digest",
+    "artifact_path",
     "credential_ref",
     "timeout_seconds",
     "output_limit_bytes",
@@ -50,11 +54,11 @@ class CapsuleEntrypointError(RuntimeError):
 
 
 def main() -> int:
-    """Execute exactly one validated specification against the fixed endpoint."""
+    """Execute exactly one digest-bound artifact and emit its typed output."""
     try:
         spec = load_spec()
-        credential = load_credential()
-        observation = invoke_endpoint(spec, credential)
+        load_credential()
+        observation = invoke_artifact(spec)
         encoded = json.dumps(
             observation,
             sort_keys=True,
@@ -107,6 +111,14 @@ def load_spec(path: Path | None = None) -> dict[str, Any]:
         raise CapsuleEntrypointError("invalid_parameters")
     if document["arguments"] != {}:
         raise CapsuleEntrypointError("invalid_parameters")
+    if document["artifact_path"] != str(ARTIFACT_PATH):
+        raise CapsuleEntrypointError("invalid_artifact")
+    digest = document["artifact_digest"]
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+    ):
+        raise CapsuleEntrypointError("invalid_artifact")
     if not _string_list(action["observed_permission_footprint"]):
         raise CapsuleEntrypointError("invalid_spec")
     if not _string_list(action["expected_capabilities"]):
@@ -144,51 +156,36 @@ def load_credential(path: Path | None = None) -> str:
     return credential
 
 
-def invoke_endpoint(
+def invoke_artifact(
     spec: Mapping[str, Any],
-    credential: str,
     *,
-    opener: Callable[..., Any] | None = None,
+    path: Path | None = None,
 ) -> dict[str, Any]:
-    """Send one typed operation to the fixed private mock endpoint."""
-    opener = opener or urlopen
-    action = spec["action"]
-    payload = {
-        "action_id": action["action_id"],
-        "approval_id": spec["approval_id"],
-        "engagement_id": spec["engagement_id"],
-        "expected_capabilities": action["expected_capabilities"],
-        "identity": spec["identity"],
-        "observed_permission_footprint": action[
-            "observed_permission_footprint"
-        ],
-        "operation": action["provider_operation"],
-        "parameters": spec["arguments"],
-        "target": spec["target"],
-    }
-    request = Request(
-        ENDPOINT_URL,
-        data=json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {credential}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
+    """Verify and run the exact approved file without a shell."""
+    path = path or ARTIFACT_PATH
+    try:
+        encoded_source = path.read_bytes()
+    except OSError:
+        raise CapsuleEntrypointError("artifact_unavailable") from None
+    digest = "sha256:" + hashlib.sha256(encoded_source).hexdigest()
+    if not encoded_source or digest != spec["artifact_digest"]:
+        raise CapsuleEntrypointError("artifact_mismatch")
     limit = min(spec["output_limit_bytes"], MAXIMUM_RESPONSE_BYTES)
     try:
-        with opener(request, timeout=float(spec["timeout_seconds"])) as response:
-            encoded = response.read(limit + 1)
-    except (HTTPError, URLError, OSError, TimeoutError):
-        raise CapsuleEntrypointError("endpoint_failed") from None
-    if len(encoded) > limit:
+        result = subprocess.run(
+            (sys.executable, str(path)),
+            capture_output=True,
+            check=False,
+            timeout=float(spec["timeout_seconds"]),
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise CapsuleEntrypointError("artifact_failed") from None
+    if result.returncode != 0 or result.stderr:
+        raise CapsuleEntrypointError("artifact_failed")
+    if not result.stdout or len(result.stdout) > limit:
         raise CapsuleEntrypointError("output_exceeded")
     try:
-        document = json.loads(encoded)
+        document = json.loads(result.stdout)
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise CapsuleEntrypointError("malformed_output") from None
     if not isinstance(document, dict):

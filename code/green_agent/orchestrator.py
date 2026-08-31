@@ -728,10 +728,14 @@ class GreenAgent:
 
         arguments = TechniqueActionParameters()
         action_command = candidate.action_command
+        artifact = action_command.artifact if action_command is not None else None
         if (
             action_command is None
             or action_command.action_id != candidate.proposal.action_id
             or action_command.approval_id is None
+            or artifact is None
+            or not artifact.written
+            or not artifact.workspace_path
         ):
             raise DataConsistencyError(
                 "execution candidate has no matching typed command"
@@ -749,6 +753,8 @@ class GreenAgent:
             matrix_version=engagement.matrix_version,
             operator=decision.operator,
             credential_ref=state.credential,
+            artifact_digest=artifact.digest,
+            artifact_path=artifact.workspace_path,
         )
         request = ExecutionRequest(
             engagement_id=engagement.engagement_id,
@@ -762,6 +768,8 @@ class GreenAgent:
             state_version=current_state_version,
             matrix_version=engagement.matrix_version,
             credential_ref=state.credential,
+            artifact_digest=artifact.digest,
+            artifact_path=artifact.workspace_path,
         )
         self.repository.record_approval(approval)
         self.execution.authorize(self._authorization(engagement, enabled=True))

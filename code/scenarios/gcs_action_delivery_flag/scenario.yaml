@@ -1,0 +1,50 @@
+name: gcs-action-delivery-flag
+objective: >-
+  Use the cataloged storage.objects.create technique to deliver one explicitly
+  approved action envelope to the scenario bucket. The goal is achieved only
+  when the operator retrieves that envelope and derives its run-specific flag
+  from the opaque approval identifier.
+operator: mouadabid2002@gmail.com
+target_scope: >-
+  projects/project-551b0c2b-9622-4479-b23/buckets/verisentinel-tf-flag-project-551b0c2b-9622-4479-b23
+
+infrastructure:
+  path: >-
+    projects/project-551b0c2b-9622-4479-b23/buckets/verisentinel-tf-flag-project-551b0c2b-9622-4479-b23
+  terraform_root: terraform
+
+starting_service_account:
+  identity: >-
+    verisentinel-tf-flag-runner@project-551b0c2b-9622-4479-b23.iam.gserviceaccount.com
+  credential_ref: scenario/gcs-action-delivery-flag
+  permissions:
+    - storage.objects.create
+
+# Sigma has no loaded rule covering storage.objects.create in the current
+# corpus, so the matching registered technique remains admissible.
+detections:
+  sources:
+    - sigma
+  strict: true
+
+model:
+  name: gemini-3.6-flash
+  fallback_models:
+    - gemini-3.1-flash-lite
+  api_mode: generate_content
+  thinking_level: medium
+  timeout_seconds: 45
+  maximum_attempts: 2
+  heartbeat_seconds: 5
+
+copilot:
+  enabled: true
+  provider: google-vertex
+  model: gemini-3.7-flash
+  home_env: DSH_HOME
+  source_root_env: DSH_SOURCE_ROOT
+  timeout_seconds: 1800
+  maximum_repairs: 3
+
+completion:
+  flag_template: "FLAG{gcs-action-delivery:{approval_id}}"

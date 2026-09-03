@@ -4,17 +4,17 @@ import pytest
 
 from core.errors import DataConsistencyError
 from core.models import (
+    ActionCommand,
     CandidateCard,
     CandidateValidationResult,
     DecisionKind,
     OperatorDecision,
     Proposal,
-    StateValidationResult,
+    ReviewStage,
 )
 from launchpad.models import CandidateSet
 from launchpad.repository import LaunchpadRepository
 from launchpad.service import LaunchpadService
-from launchpad.ui import render_dashboard
 
 
 def card(candidate_id: str, rank: int = 1) -> CandidateCard:
@@ -56,6 +56,57 @@ def candidate_set(*cards: CandidateCard) -> CandidateSet:
     )
 
 
+def test_launchpad_persists_review_stage(tmp_path: Path) -> None:
+    service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
+    action_card = card("candidate-1").model_copy(
+        update={
+            "action_command": ActionCommand(
+                action_id="technique:technique",
+                approval_id="approval_" + "1" * 32,
+                display="catalog.technique technique:technique",
+            )
+        }
+    )
+
+    published = service.publish(
+        candidate_set(action_card).model_copy(
+            update={"review_stage": ReviewStage.ACTION_EXECUTION}
+        )
+    )
+
+    assert published.review_stage == ReviewStage.ACTION_EXECUTION
+    assert service.candidates("engagement").review_stage == ReviewStage.ACTION_EXECUTION
+
+
+def test_launchpad_persists_typed_action_command_preview(tmp_path: Path) -> None:
+    service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
+    action_card = card("candidate-1").model_copy(
+        update={
+            "action_command": ActionCommand(
+                action_id="technique:technique",
+                approval_id="approval_" + "1" * 32,
+                display="/usr/local/bin/python /workspace/action.py",
+            )
+        }
+    )
+
+    published = service.publish(candidate_set(action_card))
+
+    assert published.candidates[0].action_command == action_card.action_command
+
+
+def test_launchpad_rejects_action_review_without_command_preview(
+    tmp_path: Path,
+) -> None:
+    service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
+    action_set = candidate_set(card("candidate-1")).model_copy(
+        update={"review_stage": ReviewStage.ACTION_EXECUTION}
+    )
+
+    with pytest.raises(DataConsistencyError, match="command preview"):
+        service.publish(action_set)
+
+
 def test_launchpad_rejects_more_than_three_candidates(tmp_path: Path) -> None:
     service = LaunchpadService(repository=LaunchpadRepository(tmp_path))
     with pytest.raises(DataConsistencyError):
@@ -92,39 +143,3 @@ def test_launchpad_approval_must_select_a_displayed_candidate(tmp_path: Path) ->
                 operator="operator@example.test",
             )
         )
-
-
-def test_dashboard_displays_state_and_candidate_evidence() -> None:
-    displayed_card = card("candidate-1").model_copy(
-        update={
-            "technique_title": "Test technique",
-            "expected_capabilities": ("test-capability",),
-            "validation": card("candidate-1").validation.model_copy(
-                update={"uncovered_permissions": ("test.permission",)}
-            ),
-        }
-    )
-    candidates = candidate_set(displayed_card).model_copy(
-        update={
-            "identity": "identity",
-            "scope": "projects/sandbox",
-            "state_analysis": StateValidationResult(
-                result_id="state-validation",
-                state_version="state",
-                matrix_version="matrix",
-                monitored_permission_indices=(0,),
-                unmonitored_permission_indices=(1, 2),
-                monitored_permissions=("monitored.permission",),
-                unmonitored_permissions=("unmonitored.one", "unmonitored.two"),
-                has_gap=True,
-            ),
-        }
-    )
-
-    dashboard = render_dashboard(candidates)
-
-    assert "3</strong> available permissions" in dashboard
-    assert "Test technique" in dashboard
-    assert "test-capability" in dashboard
-    assert "test.permission" in dashboard
-    assert "/execute" not in dashboard

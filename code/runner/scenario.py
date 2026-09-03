@@ -1,33 +1,80 @@
 from __future__ import annotations
 
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 import yaml
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator
 
-from core.models import ImmutableModel
+from core.models import CREDENTIAL_REFERENCE_PATTERN, ImmutableModel
 
 
 class ScenarioError(ValueError):
     """A scenario is missing or invalid without exposing its secret values."""
 
 
+_SERVICE_ACCOUNT_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$")
+_PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+_BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$")
+_TERRAFORM_ROOT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
+_ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+
+
+class InfrastructureTarget(ImmutableModel):
+    """Remote infrastructure selected by one scenario."""
+
+    path: str = Field(min_length=1, max_length=512)
+    terraform_root: str | None = Field(default=None, max_length=256)
+
+    @field_validator("path")
+    @classmethod
+    def path_is_canonical(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parts = normalized.split("/")
+        if (
+            len(parts) != 4
+            or parts[0] != "projects"
+            or parts[2] != "buckets"
+            or _PROJECT_PATTERN.fullmatch(parts[1]) is None
+            or _BUCKET_PATTERN.fullmatch(parts[3]) is None
+        ):
+            raise ValueError("path must be projects/PROJECT/buckets/BUCKET")
+        return normalized
+
+    @field_validator("terraform_root")
+    @classmethod
+    def terraform_root_is_relative(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        path = PurePosixPath(normalized)
+        if (
+            not normalized
+            or path.is_absolute()
+            or ".." in path.parts
+            or _TERRAFORM_ROOT_PATTERN.fullmatch(normalized) is None
+        ):
+            raise ValueError("terraform_root must be a safe relative directory")
+        return normalized
+
+
 class StartingServiceAccount(ImmutableModel):
     identity: str = Field(min_length=1)
-    access_token: SecretStr
+    credential_ref: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=CREDENTIAL_REFERENCE_PATTERN,
+    )
     permissions: tuple[str, ...] = Field(min_length=1)
 
-    @field_validator("access_token", mode="before")
+    @field_validator("identity")
     @classmethod
-    def token_is_not_a_placeholder(cls, value: object) -> object:
-        token = str(value).strip()
-        if len(token) < 20:
-            raise ValueError("access_token must contain a non-placeholder token of 20+ characters")
-        normalized = token.lower()
-        if "replace" in normalized or "your_" in normalized or "placeholder" in normalized:
-            raise ValueError("replace the access_token placeholder before running the scenario")
-        return token
+    def identity_is_service_account(cls, value: str) -> str:
+        normalized = value.strip()
+        if _SERVICE_ACCOUNT_PATTERN.fullmatch(normalized) is None:
+            raise ValueError("identity must be a service account principal")
+        return normalized
 
     @field_validator("permissions")
     @classmethod
@@ -71,14 +118,68 @@ class ModelSettings(ImmutableModel):
         return value
 
 
+class CompletionSettings(ImmutableModel):
+    """Deterministic evidence required before displaying scenario completion."""
+
+    flag_template: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @field_validator("flag_template")
+    @classmethod
+    def flag_template_has_one_approval_identifier(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        if (
+            value.count("{approval_id}") != 1
+            or not value.startswith("FLAG{")
+            or not value.endswith("}")
+        ):
+            raise ValueError("flag_template must be a FLAG value containing one {approval_id}")
+        if "{" in value.removeprefix("FLAG{").replace("{approval_id}", ""):
+            raise ValueError("flag_template contains an unsupported placeholder")
+        return value
+
+
+class CopilotSettings(ImmutableModel):
+    """Full DSH Web route used after technique selection."""
+
+    enabled: bool = False
+    provider: str = Field(default="google-vertex", min_length=1, max_length=128)
+    model: str = Field(default="gemini-3.7-flash", min_length=1, max_length=128)
+    home_env: str = "DSH_HOME"
+    source_root_env: str = "DSH_SOURCE_ROOT"
+    timeout_seconds: float = Field(default=1_800.0, gt=0, le=3_600)
+    maximum_repairs: int = Field(default=3, ge=1, le=10)
+
+    @field_validator("home_env", "source_root_env")
+    @classmethod
+    def path_environment_is_safe(cls, value: str) -> str:
+        if _ENVIRONMENT_NAME_PATTERN.fullmatch(value) is None:
+            raise ValueError("DSH path references must be uppercase environment names")
+        return value
+
+    @field_validator("provider", "model")
+    @classmethod
+    def model_route_is_trimmed(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(character.isspace() for character in normalized):
+            raise ValueError("DSH provider and model names cannot contain whitespace")
+        return normalized
+
+
 class PlannerScenario(ImmutableModel):
     name: str = Field(min_length=1)
     objective: str = Field(min_length=1)
     operator: str = Field(min_length=1)
     target_scope: str = Field(min_length=1)
+    infrastructure: InfrastructureTarget
     starting_service_account: StartingServiceAccount
     detections: DetectionProfile = Field(default_factory=DetectionProfile)
     model: ModelSettings = Field(default_factory=ModelSettings)
+    copilot: CopilotSettings = Field(default_factory=CopilotSettings)
+    completion: CompletionSettings = Field(default_factory=CompletionSettings)
 
     @field_validator("target_scope")
     @classmethod

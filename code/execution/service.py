@@ -5,14 +5,22 @@ from threading import RLock
 
 from core.config import Paths
 from core.errors import AuthorizationError, DataConsistencyError, NotFoundError
-from core.models import ApprovalRecord, ExecutionRequest, ExecutionResult
+from core.models import (
+    ApprovalRecord,
+    ExecutionObservation,
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionSpec,
+)
 from core.tracing import DebugTrace
-from execution.credentials import InMemoryCredentialVault
+from execution.capsule.provider import CapsuleExecutionError
+from execution.credentials import CredentialResolver
 from execution.guardrails import verify_execution_authority
-from execution.models import EngagementAuthorization, ExecutionRecord
+from execution.models import EngagementAuthorization, ExecutionAttempt, ExecutionRecord
+from execution.provider import ExecutionProvider
 from execution.registry import ActionRegistry
 from execution.repository import ExecutionRepository
-from execution.simulator import IAMSimulator
+from execution.simulator import SimulatorExecutionProvider
 from ingestion.snapshot import SnapshotRepository
 
 
@@ -21,26 +29,43 @@ class ExecutionService:
         self,
         repository: ExecutionRepository | None = None,
         snapshots: SnapshotRepository | None = None,
-        simulator: IAMSimulator | None = None,
+        provider_impl: ExecutionProvider | None = None,
         paths: Paths | None = None,
         enabled: bool | None = None,
         provider: str | None = None,
-        credentials: InMemoryCredentialVault | None = None,
+        credential_resolver: CredentialResolver | None = None,
         trace: DebugTrace | None = None,
     ) -> None:
         paths = paths or Paths()
         self.repository = repository or ExecutionRepository(paths.runtime / "execution")
         self.snapshots = snapshots or SnapshotRepository(paths.artifacts / "snapshots")
         self.registry = ActionRegistry(self.snapshots)
-        self.simulator = simulator or IAMSimulator()
-        self.credentials = credentials or InMemoryCredentialVault()
+        self.credential_resolver = credential_resolver or CredentialResolver()
         self.trace = trace
-        self.provider = provider or os.getenv("EXECUTION_PROVIDER", "simulator")
-        if self.provider != "simulator":
-            raise ValueError(
-                "only the offline simulator is implemented; GCP actions require an explicit "
-                "registered provider"
-            )
+        selected_provider = provider or os.getenv("EXECUTION_PROVIDER", "simulator")
+        if provider_impl is None:
+            if selected_provider == "simulator":
+                provider_impl = SimulatorExecutionProvider()
+            elif selected_provider == "capsule":
+                from execution.capsule.doctor import CapsuleDoctor
+                from execution.capsule.provider import (
+                    CapsuleConfiguration,
+                    CapsuleExecutionProvider,
+                )
+                from execution.capsule.runtime import DockerRuntime
+
+                configuration = CapsuleConfiguration.from_environment()
+                runtime = DockerRuntime()
+                CapsuleDoctor(configuration, runtime).require_ready()
+                provider_impl = CapsuleExecutionProvider(configuration, runtime)
+            else:
+                raise ValueError(f"execution provider {selected_provider!r} is not registered")
+        elif provider is not None and provider != provider_impl.name:
+            raise ValueError("execution provider selector does not match the supplied provider")
+        if provider_impl.name not in {"simulator", "capsule", "evaluation", "gcp"}:
+            raise ValueError(f"execution provider {provider_impl.name!r} is not registered")
+        self.execution_provider = provider_impl
+        self.provider = provider_impl.name
         default_enabled = "true" if self.provider == "simulator" else "false"
         self.enabled = (
             enabled
@@ -49,20 +74,7 @@ class ExecutionService:
         )
         self._lock = RLock()
 
-    def register_access_token(self, identity: str, access_token: str) -> str:
-        reference = self.credentials.register_access_token(identity, access_token)
-        if self.trace is not None:
-            self.trace.emit(
-                "execution",
-                "credential_registered",
-                identity=identity,
-                credential_reference=reference,
-            )
-        return reference
-
-    def authorize(
-        self, authorization: EngagementAuthorization
-    ) -> EngagementAuthorization:
+    def authorize(self, authorization: EngagementAuthorization) -> EngagementAuthorization:
         return self.repository.authorize(authorization)
 
     def register_approval(self, approval: ApprovalRecord) -> ApprovalRecord:
@@ -84,15 +96,6 @@ class ExecutionService:
             if not self.enabled:
                 raise AuthorizationError("the execution service kill switch is active")
             try:
-                self.repository.by_approval(request.approval_id)
-            except NotFoundError:
-                pass
-            else:
-                raise AuthorizationError(
-                    f"approval {request.approval_id!r} has already been consumed"
-                )
-
-            try:
                 approval = self.repository.approval(request.approval_id)
                 authorization = self.repository.authorization(request.engagement_id)
             except NotFoundError as error:
@@ -101,14 +104,14 @@ class ExecutionService:
                 ) from error
             verify_execution_authority(request, approval, authorization)
             action = self.registry.resolve(request)
-            observation = self.simulator.execute(request, action)
-            result = ExecutionResult(observation=observation, provider="simulator")
             try:
-                self.repository.record(
-                    ExecutionRecord(request=request, approval=approval, result=result)
+                attempt = self.repository.reserve_attempt(
+                    approval,
+                    self.provider,
                 )
             except DataConsistencyError as error:
                 raise AuthorizationError(str(error)) from error
+            result = self._invoke_provider(request, approval, action.spec, attempt)
             if self.trace is not None:
                 self.trace.emit(
                     "execution",
@@ -119,6 +122,106 @@ class ExecutionService:
                     response_summary=result.observation.api_response_summary,
                 )
             return result
+
+    def _invoke_provider(
+        self,
+        request: ExecutionRequest,
+        approval: ApprovalRecord,
+        spec: ExecutionSpec,
+        attempt: ExecutionAttempt,
+    ) -> ExecutionResult:
+        """Resolve credentials, invoke the provider, and persist one outcome."""
+        failure_code = "credential_resolution_failed"
+        try:
+            with self.credential_resolver.resolve(
+                spec.credential_ref,
+                spec.identity,
+            ) as credential_lease:
+                failure_code = "provider_execution_failed"
+                raw_observation = self.execution_provider.execute(
+                    spec,
+                    credential_lease,
+                )
+                failure_code = "provider_observation_invalid"
+                observation = self._validate_observation(
+                    raw_observation,
+                    spec,
+                    credential_lease.access_token,
+                )
+            result = ExecutionResult(
+                observation=observation,
+                provider=self.provider,
+            )
+            failure_code = "result_persistence_failed"
+            self.repository.record(
+                ExecutionRecord(
+                    request=request,
+                    approval=approval,
+                    result=result,
+                    spec=spec,
+                )
+            )
+            self.repository.complete_attempt(
+                attempt,
+                execution_id=observation.execution_id,
+            )
+            return result
+        except BaseException as error:
+            self.repository.fail_attempt(attempt, failure_code=failure_code)
+            if not isinstance(error, Exception):
+                raise
+            if failure_code == "credential_resolution_failed" and isinstance(
+                error, AuthorizationError
+            ):
+                raise
+            if isinstance(error, CapsuleExecutionError):
+                raise AuthorizationError(f"execution provider failed: {str(error)[:512]}") from None
+            raise AuthorizationError("execution provider failed") from None
+
+    @staticmethod
+    def _validate_observation(
+        observation: ExecutionObservation,
+        spec: ExecutionSpec,
+        access_token: str,
+    ) -> ExecutionObservation:
+        """Validate bounded provider output against the approved specification."""
+        validated = ExecutionObservation.model_validate(observation.model_dump(mode="json"))
+        expected = (
+            spec.engagement_id,
+            spec.action.action_id,
+            spec.identity,
+            spec.target,
+        )
+        actual = (
+            validated.engagement_id,
+            validated.action_id,
+            validated.identity,
+            validated.target,
+        )
+        if actual != expected:
+            raise AuthorizationError(
+                "provider observation does not match the approved specification"
+            )
+        if ExecutionService._contains_value(
+            validated.model_dump(mode="python"),
+            access_token,
+        ):
+            raise AuthorizationError("provider observation contains credential material")
+        serialized = validated.model_dump_json().encode("utf-8")
+        if len(serialized) > spec.output_limit_bytes:
+            raise AuthorizationError("provider observation exceeds its output limit")
+        return validated
+
+    @staticmethod
+    def _contains_value(value: object, expected: str) -> bool:
+        """Return whether a nested provider value contains credential material."""
+        if isinstance(value, str):
+            return expected in value
+        if isinstance(value, dict):
+            return any(ExecutionService._contains_value(item, expected) for item in value.values())
+        if isinstance(value, (list, tuple)):
+            return any(ExecutionService._contains_value(item, expected) for item in value)
+        return False
 
     def get(self, execution_id: str) -> ExecutionRecord:
         return self.repository.get(execution_id)

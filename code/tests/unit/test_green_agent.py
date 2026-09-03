@@ -1,19 +1,28 @@
+import hashlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from action_agent.workspace import ActionWorkspace
 from core.config import Paths
-from core.errors import DataConsistencyError, VersionConflictError
+from core.errors import AuthorizationError, DataConsistencyError, VersionConflictError
 from core.models import (
+    ActionArtifact,
+    ActionAuthorRequest,
+    ActionCommand,
     CreateEngagementRequest,
     DecisionKind,
     EngagementStatus,
     OperatorDecision,
     Proposal,
     ProposalBatch,
+    ProposalRequest,
+    ReviewStage,
 )
 from environment.brain import EnvironmentBrain
 from environment.repository import EnvironmentRepository
+from execution.credentials import CredentialResolver, TokenMetadata, parse_credential_source
 from execution.repository import ExecutionRepository
 from execution.service import ExecutionService
 from green_agent.orchestrator import GreenAgent
@@ -24,12 +33,16 @@ from launchpad.repository import LaunchpadRepository
 from launchpad.service import LaunchpadService
 from validator.service import ValidatorService
 
+GREEN_ACCESS_TOKEN = "synthetic-green-agent-token"
+
 
 class StaticProposer:
     def __init__(self, proposals: tuple[Proposal, ...]) -> None:
         self.proposals = proposals
+        self.requests: list[ProposalRequest] = []
 
-    def propose(self, request) -> ProposalBatch:
+    def propose(self, request: ProposalRequest) -> ProposalBatch:
+        self.requests.append(request)
         allowed = set(request.relevant_technique_ids)
         return ProposalBatch(
             proposals=tuple(
@@ -39,6 +52,44 @@ class StaticProposer:
             ),
             provider="fixture",
             model="fixture",
+        )
+
+
+class StaticTokenInspector:
+    """Return an offline credential identity for orchestration tests."""
+
+    def inspect(self, access_token: str) -> TokenMetadata:
+        del access_token
+        return TokenMetadata(
+            principal="operator@example.test",
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+
+
+class StaticActionAuthor:
+    """Return a bounded unwritten action file for orchestration tests."""
+
+    def __init__(self) -> None:
+        self.requests: list[ActionAuthorRequest] = []
+
+    def author(self, request: ActionAuthorRequest) -> ActionCommand:
+        self.requests.append(request)
+        content = "print('fixture')\n"
+        artifact = ActionArtifact(
+            content=content,
+            digest="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            source_model="fixture-model",
+            rationale="Fixture action file.",
+        )
+        return ActionCommand(
+            action_id=request.action_id,
+            approval_id=request.approval_id,
+            display="/usr/local/bin/python /workspace/action.py",
+            prepared_by="model",
+            tool_source="action.py",
+            tool_installation="Proposed by fixture-model; not written.",
+            side_effects=(f"Invoke {request.action_id} against {request.target}",),
+            artifact=artifact,
         )
 
 
@@ -69,12 +120,19 @@ def services(tmp_path: Path, proposal_factory=None):
     environment = EnvironmentBrain(
         repository=EnvironmentRepository(tmp_path / "environment"), snapshots=snapshots
     )
-    launchpad = LaunchpadService(
-        repository=LaunchpadRepository(tmp_path / "launchpad")
+    launchpad = LaunchpadService(repository=LaunchpadRepository(tmp_path / "launchpad"))
+    credential_resolver = CredentialResolver(
+        environ={"EXECUTION_TOKEN": GREEN_ACCESS_TOKEN},
+        token_inspector=StaticTokenInspector(),
+    )
+    credential_resolver.register(
+        "credential-a",
+        parse_credential_source("env:EXECUTION_TOKEN"),
     )
     execution = ExecutionService(
         repository=ExecutionRepository(tmp_path / "execution"),
         snapshots=snapshots,
+        credential_resolver=credential_resolver,
         enabled=True,
     )
     green = GreenAgent(
@@ -85,6 +143,8 @@ def services(tmp_path: Path, proposal_factory=None):
         validator=ValidatorService(snapshots=snapshots),
         launchpad=launchpad,
         execution=execution,
+        action_author=StaticActionAuthor(),
+        artifact_writer=ActionWorkspace(tmp_path / "action-workspace"),
     )
     permissions = tuple(matrix.permissions[index] for index in selected.required_indices)
     engagement = green.create(
@@ -97,6 +157,25 @@ def services(tmp_path: Path, proposal_factory=None):
         )
     )
     return green, launchpad, execution, engagement, proposal
+
+
+class FailOnceExecution:
+    """Fail one approved command while preserving the real approval repository."""
+
+    def __init__(self, delegate: ExecutionService) -> None:
+        self.delegate = delegate
+        self.calls = 0
+
+    def authorize(self, authorization):
+        return self.delegate.authorize(authorization)
+
+    def register_approval(self, approval):
+        return self.delegate.register_approval(approval)
+
+    def execute(self, request):
+        del request
+        self.calls += 1
+        raise AuthorizationError("execution provider failed: capsule process failed")
 
 
 def decision(engagement, kind: DecisionKind, candidate_id: str | None = None):
@@ -116,19 +195,31 @@ def test_green_agent_publishes_only_admissible_candidates(tmp_path: Path) -> Non
     result = green.cycle(engagement.engagement_id)
 
     assert result.status == EngagementStatus.AWAITING_APPROVAL
-    assert [card.proposal.candidate_id for card in result.candidates] == [
-        proposal.candidate_id
-    ]
+    assert [card.proposal.candidate_id for card in result.candidates] == [proposal.candidate_id]
     assert launchpad.candidates(engagement.engagement_id).candidates == result.candidates
     assert execution.repository.executions.list_keys() == ()
 
 
-def test_explicit_approval_executes_and_versions_the_environment(tmp_path: Path) -> None:
+def test_proposal_model_input_excludes_credential_values(tmp_path: Path) -> None:
+    green, _, _, engagement, _ = services(tmp_path)
+
+    green.cycle(engagement.engagement_id)
+
+    proposer = green.proposer
+    assert isinstance(proposer, StaticProposer)
+    captured = proposer.requests[0].model_dump_json()
+    assert GREEN_ACCESS_TOKEN not in captured
+    assert '"credential-a"' not in captured
+
+
+def test_technique_selection_precedes_approved_action_execution(
+    tmp_path: Path,
+) -> None:
     green, _, execution, engagement, proposal = services(tmp_path)
     cycle = green.cycle(engagement.engagement_id)
     old_state = engagement.state_version
 
-    next_cycle = green.decide(
+    action_cycle = green.decide(
         decision(
             green.get(engagement.engagement_id),
             DecisionKind.APPROVE,
@@ -136,13 +227,143 @@ def test_explicit_approval_executes_and_versions_the_environment(tmp_path: Path)
         )
     )
 
+    assert action_cycle.review_stage == ReviewStage.ACTION_ARTIFACT
+    assert action_cycle.status == EngagementStatus.AWAITING_APPROVAL
+    assert action_cycle.candidates
+    assert action_cycle.candidates[0].action_command is not None
+    assert action_cycle.candidates[0].action_command.approval_id.startswith("approval_")
+    assert execution.repository.executions.list_keys() == ()
+    assert green.environment.current(engagement.engagement_id).state_version == old_state
+    assert green.get(engagement.engagement_id).selected_technique_id == proposal.technique_id
+
+    command_cycle = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            action_cycle.candidates[0].proposal.candidate_id,
+        )
+    )
+
+    assert command_cycle.review_stage == ReviewStage.ACTION_EXECUTION
+    command = command_cycle.candidates[0].action_command
+    assert command is not None
+    assert command.artifact is not None
+    assert command.artifact.written
+    assert Path(command.artifact.workspace_path).read_text(encoding="utf-8") == (
+        command.artifact.content
+    )
+    assert execution.repository.executions.list_keys() == ()
+
+    completed = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            command_cycle.candidates[0].proposal.candidate_id,
+        )
+    )
+
     assert execution.repository.executions.list_keys()
     assert green.environment.current(engagement.engagement_id).state_version != old_state
-    assert next_cycle.status == EngagementStatus.AWAITING_APPROVAL
-    assert not next_cycle.candidates
-    assert cycle.candidates[0].proposal.action_id in green.environment.current(
-        engagement.engagement_id
-    ).completed_actions
+    assert completed.status == EngagementStatus.COMPLETED
+    assert completed.review_stage == ReviewStage.ACTION_EXECUTION
+    assert not completed.candidates
+    assert completed.execution_observation is not None
+    assert completed.execution_observation.success
+    assert completed.executed_command == command_cycle.candidates[0].action_command
+    execution_id = execution.repository.executions.list_keys()[0]
+    record = execution.repository.get(execution_id)
+    assert record.approval.approval_id == (command_cycle.candidates[0].action_command.approval_id)
+    assert record.approval.artifact_digest == command.artifact.digest
+    assert record.request.artifact_path == command.artifact.workspace_path
+    assert record.spec is not None
+    assert record.spec.artifact_digest == command.artifact.digest
+    assert (
+        completed.resulting_state_version
+        == green.environment.current(engagement.engagement_id).state_version
+    )
+    assert (
+        cycle.candidates[0].proposal.action_id
+        in green.environment.current(engagement.engagement_id).completed_actions
+    )
+
+
+def test_execution_failure_returns_to_fresh_file_review(tmp_path: Path) -> None:
+    green, _, execution, engagement, proposal = services(tmp_path)
+    failing = FailOnceExecution(execution)
+    green.execution = failing
+    selection = green.cycle(engagement.engagement_id)
+    artifact = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            selection.candidates[0].proposal.candidate_id,
+        )
+    )
+    command = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            artifact.candidates[0].proposal.candidate_id,
+        )
+    )
+    consumed_approval = command.candidates[0].action_command.approval_id
+
+    repaired = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            command.candidates[0].proposal.candidate_id,
+        )
+    )
+
+    assert failing.calls == 1
+    assert repaired.status == EngagementStatus.AWAITING_APPROVAL
+    assert repaired.review_stage == ReviewStage.ACTION_ARTIFACT
+    assert repaired.candidates[0].action_command.approval_id != consumed_approval
+    assert "Nothing was rerun automatically" in repaired.message
+    author = green.action_author
+    assert isinstance(author, StaticActionAuthor)
+    assert "one-time approval was consumed" in author.requests[-1].repair_feedback[-1]
+    assert execution.repository.executions.list_keys() == ()
+
+
+def test_action_rejection_feedback_reguides_the_next_proposal(
+    tmp_path: Path,
+) -> None:
+    green, _, execution, engagement, proposal = services(tmp_path)
+    green.cycle(engagement.engagement_id)
+    action_cycle = green.decide(
+        decision(
+            green.get(engagement.engagement_id),
+            DecisionKind.APPROVE,
+            proposal.candidate_id,
+        )
+    )
+    feedback = "Describe the bounded delivery operation more precisely."
+    rejected = decision(
+        green.get(engagement.engagement_id),
+        DecisionKind.REJECT,
+        action_cycle.candidates[0].proposal.candidate_id,
+    ).model_copy(update={"reason": feedback})
+
+    next_action = green.decide(rejected)
+
+    assert next_action.review_stage == ReviewStage.ACTION_ARTIFACT
+    assert next_action.candidates
+    assert execution.repository.executions.list_keys() == ()
+    proposer = green.proposer
+    assert isinstance(proposer, StaticProposer)
+    assert feedback in proposer.requests[-1].previous_rejections[-1]
+    assert proposer.requests[-1].environment_summary["review_stage"] == (
+        ReviewStage.ACTION_ARTIFACT.value
+    )
+    assert proposer.requests[-1].environment_summary["allowed_actions"] == (
+        {
+            "action_id": proposal.action_id,
+            "provider_operation": "catalog.technique",
+            "parameter_model": "technique.none.v1",
+        },
+    )
 
 
 def test_stale_operator_decision_executes_nothing(tmp_path: Path) -> None:

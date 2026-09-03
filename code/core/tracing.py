@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -23,6 +24,7 @@ SAFE_TOKEN_COUNT_KEYS = {
     "total_tool_use_tokens",
     "total_tokens",
 }
+MAXIMUM_PROGRESS_SUMMARY_CHARACTERS = 500
 
 
 class DebugTrace:
@@ -67,7 +69,7 @@ class DebugTrace:
         progress_line = f"[{record['timestamp']}] {level.upper():5} {component}: {event}"
         if summary is not None:
             redacted_summary = self._redact(summary, "summary")
-            progress_line += f" | {redacted_summary}"
+            progress_line += f" | {_safe_progress_summary(redacted_summary)}"
         progress_line += "\n"
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,3 +100,13 @@ class DebugTrace:
                 redacted = redacted.replace(secret, "[REDACTED]")
             return redacted
         return value
+
+
+def _safe_progress_summary(value: Any) -> str:
+    """Return one bounded terminal-safe line for a trace summary."""
+    text = str(value)
+    without_controls = "".join(
+        " " if unicodedata.category(character) in {"Cc", "Cf"} else character
+        for character in text
+    )
+    return " ".join(without_controls.split())[:MAXIMUM_PROGRESS_SUMMARY_CHARACTERS]

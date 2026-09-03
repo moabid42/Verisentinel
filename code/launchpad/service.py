@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.config import Paths
 from core.errors import DataConsistencyError, VersionConflictError
 from core.ids import new_id
-from core.models import DecisionKind, OperatorDecision, utc_now
+from core.models import DecisionKind, OperatorDecision, ReviewStage, utc_now
 from launchpad.models import CandidateSet, DecisionReceipt
 from launchpad.repository import LaunchpadRepository
 from launchpad.sink import DecisionSink
@@ -25,6 +25,12 @@ class LaunchpadService:
             raise DataConsistencyError("the launchpad accepts at most three candidates")
         if any(not card.validation.admissible for card in candidate_set.candidates):
             raise DataConsistencyError("rejected candidates cannot be published to the launchpad")
+        if candidate_set.review_stage == ReviewStage.ACTION_EXECUTION and any(
+            card.action_command is None for card in candidate_set.candidates
+        ):
+            raise DataConsistencyError(
+                "action review requires a typed command preview"
+            )
         if any(
             card.validation.state_version != candidate_set.state_version
             or card.validation.matrix_version != candidate_set.matrix_version

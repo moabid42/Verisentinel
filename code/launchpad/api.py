@@ -1,7 +1,6 @@
 import os
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse
 
 from core.errors import (
     AuthorizationError,
@@ -14,7 +13,6 @@ from core.security import verify_control_token
 from launchpad.models import CandidateSet
 from launchpad.service import LaunchpadService
 from launchpad.sink import GreenAgentDecisionSink
-from launchpad.ui import render_dashboard
 
 app = FastAPI(title="IAM Operator Launchpad", version="0.1.0")
 control_token = os.getenv("CONTROL_PLANE_TOKEN")
@@ -59,14 +57,6 @@ def publish_candidates(
 def candidates(engagement_id: str):
     try:
         return service.candidates(engagement_id)
-    except NotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-
-
-@app.get("/engagements/{engagement_id}", response_class=HTMLResponse)
-def dashboard(engagement_id: str):
-    try:
-        return render_dashboard(service.candidates(engagement_id))
     except NotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 

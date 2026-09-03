@@ -6,6 +6,8 @@ from core.config import Paths
 from core.errors import DataConsistencyError, VersionConflictError
 from core.ids import new_id
 from core.models import (
+    ActionAuthorRequest,
+    ActionCommand,
     ApprovalRecord,
     CandidateCard,
     CandidateValidationRequest,
@@ -14,11 +16,14 @@ from core.models import (
     DecisionKind,
     Engagement,
     EngagementStatus,
+    ExecutionObservation,
     ExecutionRequest,
     OperatorDecision,
     Proposal,
     ProposalRequest,
+    ReviewStage,
     StateValidationRequest,
+    TechniqueActionParameters,
 )
 from core.security import stable_digest
 from core.tracing import DebugTrace
@@ -27,7 +32,12 @@ from environment.models import ApplyObservationRequest, InitializeEnvironmentReq
 from execution.guardrails import target_is_allowed
 from execution.models import EngagementAuthorization
 from execution.service import ExecutionService
-from green_agent.gateways import CandidatePublisher, ExecutionGateway
+from green_agent.gateways import (
+    ActionAuthor,
+    ArtifactWriter,
+    CandidatePublisher,
+    ExecutionGateway,
+)
 from green_agent.repository import GreenAgentRepository
 from ingestion.snapshot import SnapshotRepository
 from launchpad.models import CandidateSet
@@ -46,10 +56,11 @@ class GreenAgent:
         validator: ValidatorService | None = None,
         launchpad: CandidatePublisher | None = None,
         execution: ExecutionGateway | None = None,
+        action_author: ActionAuthor | None = None,
+        artifact_writer: ArtifactWriter | None = None,
         paths: Paths | None = None,
         maximum_rounds_per_cycle: int = 3,
         proposals_per_round: int = 10,
-        auto_cycle_after_execution: bool = True,
         trace: DebugTrace | None = None,
     ) -> None:
         paths = paths or Paths()
@@ -60,9 +71,14 @@ class GreenAgent:
         self.validator = validator or ValidatorService(snapshots=self.snapshots, paths=paths)
         self.launchpad = launchpad or LaunchpadService(paths=paths)
         self.execution = execution or ExecutionService(snapshots=self.snapshots, paths=paths)
+        self.action_author = action_author
+        if artifact_writer is None:
+            from action_agent.workspace import ActionWorkspace
+
+            artifact_writer = ActionWorkspace(paths.runtime / "action-agent")
+        self.artifact_writer = artifact_writer
         self.maximum_rounds_per_cycle = maximum_rounds_per_cycle
         self.proposals_per_round = proposals_per_round
-        self.auto_cycle_after_execution = auto_cycle_after_execution
         self.trace = trace
         self._lock = RLock()
 
@@ -110,9 +126,15 @@ class GreenAgent:
         with self._lock:
             engagement = self.get(engagement_id)
             self._require_active(engagement)
+            if engagement.review_stage in {
+                ReviewStage.ACTION_ARTIFACT,
+                ReviewStage.ACTION_EXECUTION,
+            }:
+                return self._action_cycle(engagement)
             self._trace(
                 "cycle_started",
                 engagement_id=engagement_id,
+                review_stage=engagement.review_stage,
                 proposal_round=engagement.proposal_round,
                 state_version=engagement.state_version,
                 matrix_version=engagement.matrix_version,
@@ -280,12 +302,193 @@ class GreenAgent:
                 engagement_id=engagement.engagement_id,
                 status=engagement.status,
                 proposal_round=engagement.proposal_round,
+                review_stage=engagement.review_stage,
                 candidates=tuple(accepted),
                 message=(
-                    f"Published {len(accepted)} admissible candidate(s) for explicit "
-                    "operator review."
+                    f"Published {len(accepted)} admissible technique candidate(s) "
+                    "for explicit selection."
                 ),
             )
+
+    def _action_cycle(self, engagement: Engagement) -> CycleResult:
+        """Propose one registered action for the selected technique."""
+        selected_technique_id = engagement.selected_technique_id
+        if selected_technique_id is None:
+            raise DataConsistencyError("action review requires an explicitly selected technique")
+        environment = self.environment.current(engagement.engagement_id)
+        if environment.matrix_version != engagement.matrix_version:
+            raise VersionConflictError("environment and engagement matrix versions differ")
+        state = self.environment.state_vector(
+            engagement.engagement_id,
+            engagement.identity,
+            engagement.target_scope,
+        )
+        matrix = self.snapshots.get(engagement.matrix_version)
+        technique = matrix.techniques.get(selected_technique_id)
+        if technique is None:
+            raise DataConsistencyError("selected technique is not in the matrix snapshot")
+        state_result = self.validator.validate_state(StateValidationRequest(state=state))
+        engagement.status = EngagementStatus.PROPOSING
+        engagement.state_version = environment.state_version
+        engagement.candidates = {}
+        engagement.last_error = None
+        self.repository.save(engagement)
+        feedback = list(engagement.rejection_feedback)
+        accepted: list[CandidateCard] = []
+        seen_candidates: set[str] = set()
+
+        for cycle_round in range(1, self.maximum_rounds_per_cycle + 1):
+            proposal_request = ProposalRequest(
+                engagement_id=engagement.engagement_id,
+                objective=(
+                    "Propose the next concrete registered action for the selected "
+                    f"technique {selected_technique_id!r}."
+                ),
+                state_version=environment.state_version,
+                matrix_version=engagement.matrix_version,
+                identity=engagement.identity,
+                environment_summary={
+                    **self.environment.render_summary(environment),
+                    "target_scope": engagement.target_scope,
+                    "review_stage": engagement.review_stage.value,
+                    "selected_technique_id": selected_technique_id,
+                    "allowed_actions": (
+                        {
+                            "action_id": f"technique:{selected_technique_id}",
+                            "provider_operation": "catalog.technique",
+                            "parameter_model": "technique.none.v1",
+                        },
+                    ),
+                    "monitored_permission_count": len(state_result.monitored_permission_indices),
+                    "unmonitored_permission_count": len(
+                        state_result.unmonitored_permission_indices
+                    ),
+                },
+                relevant_technique_ids=(selected_technique_id,),
+                previous_rejections=tuple(feedback[-50:]),
+                maximum_proposals=1,
+            )
+            self._trace(
+                "action_proposal_round_started",
+                engagement_id=engagement.engagement_id,
+                cycle_round=cycle_round,
+                selected_technique_id=selected_technique_id,
+                previous_rejection_count=len(proposal_request.previous_rejections),
+            )
+            batch = self.proposer.propose(proposal_request)
+            engagement.proposal_round += 1
+            self._trace(
+                "action_proposal_round_completed",
+                engagement_id=engagement.engagement_id,
+                cycle_round=cycle_round,
+                provider=batch.provider,
+                model=batch.model,
+                proposal_count=len(batch.proposals),
+            )
+            if not batch.proposals:
+                break
+            proposal = batch.proposals[0]
+            rejection = self._resolve_proposal(
+                proposal,
+                engagement,
+                matrix.techniques,
+                seen_candidates,
+            )
+            seen_candidates.add(proposal.candidate_id)
+            if rejection is None and proposal.technique_id != selected_technique_id:
+                rejection = "action proposal does not match the selected technique"
+            if rejection is not None:
+                feedback.append(rejection)
+                self._trace(
+                    "action_proposal_rejected",
+                    engagement_id=engagement.engagement_id,
+                    candidate_id=proposal.candidate_id,
+                    reason=rejection,
+                    stage="resolution",
+                )
+                continue
+            validation = self.validator.validate_candidate(
+                CandidateValidationRequest(
+                    candidate_id=proposal.candidate_id,
+                    technique_id=proposal.technique_id,
+                    state=state,
+                    matrix_version=engagement.matrix_version,
+                )
+            )
+            if not validation.admissible:
+                rejection = f"{proposal.action_id}: {validation.explanation}"
+                feedback.append(rejection)
+                self._trace(
+                    "action_proposal_rejected",
+                    engagement_id=engagement.engagement_id,
+                    candidate_id=proposal.candidate_id,
+                    reason=validation.explanation,
+                    stage="validation",
+                )
+                continue
+            accepted.append(
+                CandidateCard(
+                    proposal=proposal.model_copy(update={"rank": 1}),
+                    validation=validation,
+                    required_permissions=tuple(
+                        matrix.permissions[index] for index in technique.required_indices
+                    ),
+                    technique_title=technique.title,
+                    expected_capabilities=technique.grants,
+                    action_command=self._action_command(
+                        ActionAuthorRequest(
+                            engagement_id=engagement.engagement_id,
+                            approval_id=new_id("approval"),
+                            action_id=proposal.action_id,
+                            technique_id=proposal.technique_id,
+                            technique_title=technique.title,
+                            objective=engagement.objective,
+                            identity=proposal.identity,
+                            target=proposal.target,
+                            rationale=proposal.rationale,
+                            required_permissions=tuple(
+                                matrix.permissions[index] for index in technique.required_indices
+                            ),
+                            observed_permissions=tuple(
+                                matrix.permissions[index] for index in technique.footprint_indices
+                            ),
+                            expected_capabilities=technique.grants,
+                            repair_feedback=engagement.rejection_feedback,
+                        )
+                    ),
+                )
+            )
+            self._trace(
+                "action_proposal_accepted",
+                engagement_id=engagement.engagement_id,
+                candidate_id=proposal.candidate_id,
+                action_id=proposal.action_id,
+                validator_result_id=validation.result_id,
+            )
+            break
+
+        engagement.status = EngagementStatus.AWAITING_APPROVAL
+        engagement.candidates = {card.proposal.candidate_id: card for card in accepted}
+        engagement.rejection_feedback = tuple(feedback[-100:])
+        self.repository.save(engagement)
+        self.execution.authorize(self._authorization(engagement, enabled=True))
+        self._publish(engagement, tuple(accepted))
+        self._trace(
+            "action_candidates_published",
+            summary=(
+                f"Prepared {len(accepted)} model-authored file proposal(s); no "
+                "file was written and no command has run."
+            ),
+            engagement_id=engagement.engagement_id,
+            candidate_ids=[card.proposal.candidate_id for card in accepted],
+            candidate_count=len(accepted),
+            selected_technique_id=selected_technique_id,
+            state_version=engagement.state_version,
+        )
+        return self._result(
+            engagement,
+            f"Published {len(accepted)} model-authored file change(s) for explicit write approval.",
+        )
 
     def decide(self, decision: OperatorDecision) -> CycleResult:
         with self._lock:
@@ -337,7 +540,7 @@ class GreenAgent:
                 engagement.rejection_feedback = tuple(
                     [
                         *engagement.rejection_feedback,
-                        f"{candidate.proposal.technique_id}: "
+                        f"{candidate.proposal.action_id}: "
                         f"operator rejected: {decision.reason or 'no reason supplied'}",
                     ][-100:]
                 )
@@ -358,7 +561,117 @@ class GreenAgent:
                     "Candidate rejected; remaining candidates still require explicit review.",
                 )
 
+            if engagement.review_stage == ReviewStage.TECHNIQUE_SELECTION:
+                return self._select_technique(
+                    engagement,
+                    candidate,
+                    environment.state_version,
+                )
+            if engagement.review_stage == ReviewStage.ACTION_ARTIFACT:
+                return self._approve_artifact(engagement, candidate)
             return self._approve(engagement, candidate, decision, environment.state_version)
+
+    def _select_technique(
+        self,
+        engagement: Engagement,
+        candidate: CandidateCard,
+        current_state_version: str,
+    ) -> CycleResult:
+        """Bind a validated technique without authorizing execution."""
+        state = self.environment.state_vector(
+            engagement.engagement_id,
+            engagement.identity,
+            engagement.target_scope,
+        )
+        validation = self.validator.validate_candidate(
+            CandidateValidationRequest(
+                candidate_id=candidate.proposal.candidate_id,
+                technique_id=candidate.proposal.technique_id,
+                state=state,
+                matrix_version=engagement.matrix_version,
+            )
+        )
+        self._trace(
+            "technique_revalidated",
+            engagement_id=engagement.engagement_id,
+            candidate_id=candidate.proposal.candidate_id,
+            technique_id=candidate.proposal.technique_id,
+            admissible=validation.admissible,
+            validator_result_id=validation.result_id,
+        )
+        if not validation.admissible:
+            engagement.status = EngagementStatus.CREATED
+            engagement.candidates = {}
+            engagement.rejection_feedback = tuple(
+                [*engagement.rejection_feedback, validation.explanation][-100:]
+            )
+            self.repository.save(engagement)
+            raise VersionConflictError(
+                "selected technique is no longer admissible and must be reproposed"
+            )
+        engagement.status = EngagementStatus.CREATED
+        engagement.state_version = current_state_version
+        engagement.review_stage = ReviewStage.ACTION_ARTIFACT
+        engagement.selected_technique_id = candidate.proposal.technique_id
+        engagement.candidates = {}
+        engagement.excluded_technique_ids = ()
+        engagement.rejection_feedback = ()
+        self.repository.save(engagement)
+        self._trace(
+            "technique_selected",
+            summary=(
+                f"Selected technique {candidate.proposal.technique_id}; no action was executed."
+            ),
+            engagement_id=engagement.engagement_id,
+            candidate_id=candidate.proposal.candidate_id,
+            technique_id=candidate.proposal.technique_id,
+            state_version=current_state_version,
+        )
+        return self.cycle(engagement.engagement_id)
+
+    def _approve_artifact(
+        self,
+        engagement: Engagement,
+        candidate: CandidateCard,
+    ) -> CycleResult:
+        """Write one reviewed artifact without authorizing its command."""
+        command = candidate.action_command
+        artifact = command.artifact if command is not None else None
+        if command is None or command.approval_id is None or artifact is None or artifact.written:
+            raise DataConsistencyError("artifact candidate has no unwritten model-authored file")
+        written = self.artifact_writer.write(
+            engagement.engagement_id,
+            command.approval_id,
+            artifact,
+        )
+        command = command.model_copy(
+            update={
+                "artifact": written,
+                "tool_installation": (
+                    f"Authored by {written.source_model} and written after explicit "
+                    f"approval to {written.workspace_path}."
+                ),
+            }
+        )
+        candidate = candidate.model_copy(update={"action_command": command})
+        engagement.review_stage = ReviewStage.ACTION_EXECUTION
+        engagement.candidates = {candidate.proposal.candidate_id: candidate}
+        self.repository.save(engagement)
+        self._publish(engagement, (candidate,))
+        self._trace(
+            "action_artifact_written",
+            summary=(
+                f"Wrote approved {written.path}; its command remains unapproved "
+                "and has not executed."
+            ),
+            engagement_id=engagement.engagement_id,
+            candidate_id=candidate.proposal.candidate_id,
+            artifact_digest=written.digest,
+        )
+        return self._result(
+            engagement,
+            "Approved file written; the exact command now requires separate approval.",
+        )
 
     def _approve(
         self,
@@ -397,19 +710,33 @@ class GreenAgent:
                 "selected candidate is no longer admissible and must be reproposed"
             )
 
-        arguments: dict = {}
+        arguments = TechniqueActionParameters()
+        action_command = candidate.action_command
+        artifact = action_command.artifact if action_command is not None else None
+        if (
+            action_command is None
+            or action_command.action_id != candidate.proposal.action_id
+            or action_command.approval_id is None
+            or artifact is None
+            or not artifact.written
+            or not artifact.workspace_path
+        ):
+            raise DataConsistencyError("execution candidate has no matching typed command")
         approval = ApprovalRecord(
-            approval_id=new_id("approval"),
+            approval_id=action_command.approval_id,
             engagement_id=engagement.engagement_id,
             candidate_id=candidate.proposal.candidate_id,
             action_id=candidate.proposal.action_id,
             identity=candidate.proposal.identity,
             target=candidate.proposal.target,
-            arguments_digest=stable_digest(arguments),
+            arguments_digest=stable_digest(arguments.model_dump(mode="json")),
             validator_result_id=validation.result_id,
             state_version=current_state_version,
             matrix_version=engagement.matrix_version,
             operator=decision.operator,
+            credential_ref=state.credential,
+            artifact_digest=artifact.digest,
+            artifact_path=artifact.workspace_path,
         )
         request = ExecutionRequest(
             engagement_id=engagement.engagement_id,
@@ -422,6 +749,9 @@ class GreenAgent:
             approval_id=approval.approval_id,
             state_version=current_state_version,
             matrix_version=engagement.matrix_version,
+            credential_ref=state.credential,
+            artifact_digest=artifact.digest,
+            artifact_path=artifact.workspace_path,
         )
         self.repository.record_approval(approval)
         self.execution.authorize(self._authorization(engagement, enabled=True))
@@ -454,12 +784,31 @@ class GreenAgent:
                 error_type=type(error).__name__,
                 error=str(error),
             )
-            engagement.status = EngagementStatus.FAILED
+            diagnostic = str(error)[:2048]
+            feedback = (
+                f"Execution attempt {approval.approval_id} failed after its "
+                "one-time approval was consumed. Do not assume a remote side "
+                f"effect did or did not occur. Diagnostic: {diagnostic}"
+            )
+            engagement.status = EngagementStatus.CREATED
+            engagement.review_stage = ReviewStage.ACTION_ARTIFACT
             engagement.last_error = str(error)
             engagement.pending_approval_id = None
+            engagement.candidates = {}
+            engagement.rejection_feedback = tuple([*engagement.rejection_feedback, feedback][-100:])
             self.repository.save(engagement)
-            self.execution.authorize(self._authorization(engagement, enabled=False))
-            raise
+            repaired = self.cycle(engagement.engagement_id)
+            return repaired.model_copy(
+                update={
+                    "message": (
+                        "The approved command failed and its approval was "
+                        "consumed. Nothing was rerun automatically. A fresh "
+                        "model-authored file passed preflight and now requires "
+                        "new file and command approvals; the previous remote "
+                        "outcome may be uncertain."
+                    )
+                }
+            )
         engagement.state_version = updated.state_version
         self._trace(
             "environment_updated",
@@ -479,18 +828,41 @@ class GreenAgent:
             engagement.last_error = result.observation.api_response_summary
             self.repository.save(engagement)
             self.execution.authorize(self._authorization(engagement, enabled=False))
-            return self._result(engagement, "Approved action failed; engagement stopped.")
+            return self._result(
+                engagement,
+                "Approved action failed; engagement stopped.",
+                executed_command=candidate.action_command,
+                execution_observation=result.observation,
+                resulting_state_version=updated.state_version,
+            )
 
-        engagement.status = EngagementStatus.CREATED
-        engagement.excluded_technique_ids = ()
+        engagement.status = EngagementStatus.COMPLETED
         engagement.rejection_feedback = ()
         self.repository.save(engagement)
-        if self.auto_cycle_after_execution:
-            return self.cycle(engagement.engagement_id)
+        self.execution.authorize(self._authorization(engagement, enabled=False))
+        self._publish(engagement, ())
         return self._result(
             engagement,
-            "Approved action executed; automatic proposal cycling is disabled.",
+            "Approved action command executed; engagement goal stage completed.",
+            executed_command=candidate.action_command,
+            execution_observation=result.observation,
+            resulting_state_version=updated.state_version,
         )
+
+    def _action_command(self, request: ActionAuthorRequest) -> ActionCommand:
+        """Ask the configured model boundary for one unwritten action artifact."""
+        if self.action_author is None:
+            raise DataConsistencyError("model action author is not configured")
+        command = self.action_author.author(request)
+        if (
+            command.action_id != request.action_id
+            or command.approval_id != request.approval_id
+            or command.prepared_by != "model"
+            or command.artifact is None
+            or command.artifact.written
+        ):
+            raise DataConsistencyError("model action author returned an invalid binding")
+        return command
 
     @staticmethod
     def _resolve_proposal(
@@ -538,6 +910,7 @@ class GreenAgent:
                 state_version=engagement.state_version,
                 matrix_version=engagement.matrix_version,
                 candidates=candidates,
+                review_stage=engagement.review_stage,
                 identity=engagement.identity,
                 scope=engagement.target_scope,
                 state_analysis=state_analysis,
@@ -564,7 +937,14 @@ class GreenAgent:
             raise DataConsistencyError(f"engagement is terminal with status {engagement.status}")
 
     @staticmethod
-    def _result(engagement: Engagement, message: str) -> CycleResult:
+    def _result(
+        engagement: Engagement,
+        message: str,
+        *,
+        executed_command: ActionCommand | None = None,
+        execution_observation: ExecutionObservation | None = None,
+        resulting_state_version: str | None = None,
+    ) -> CycleResult:
         candidates = tuple(
             sorted(engagement.candidates.values(), key=lambda card: card.proposal.rank)
         )
@@ -572,7 +952,11 @@ class GreenAgent:
             engagement_id=engagement.engagement_id,
             status=engagement.status,
             proposal_round=engagement.proposal_round,
+            review_stage=engagement.review_stage,
             candidates=candidates,
+            executed_command=executed_command,
+            execution_observation=execution_observation,
+            resulting_state_version=resulting_state_version,
             message=message,
         )
 

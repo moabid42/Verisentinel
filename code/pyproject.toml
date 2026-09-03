@@ -15,11 +15,20 @@ dependencies = [
   "pydantic>=2.11,<3",
   "python-dotenv>=1.1,<2",
   "PyYAML>=6.0,<7",
+  "rich>=14,<16",
+  "typer>=0.16,<1",
   "uvicorn[standard]>=0.35,<1",
   "z3-solver>=4.15,<5",
 ]
 
+[project.scripts]
+verisentinel = "runner.cli:main"
+
 [project.optional-dependencies]
+copilot = [
+  "deepseek-harness-sdk==0.1.1rc1",
+  "websockets>=15,<17",
+]
 dev = [
   "pytest>=8.4,<10",
   "pytest-cov>=6.2,<8",
@@ -28,6 +37,8 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
+  "action_agent",
+  "copilot",
   "core",
   "ingestion",
   "environment",
